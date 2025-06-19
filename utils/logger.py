@@ -6,7 +6,7 @@ import warnings
 from datetime import datetime
 
 
-def setup_logger():
+def setup_logger(log_filename=None):
     """Configure logging to file with error output to console and suppress Chrome warnings"""
 
     # Suppress specific warnings and logs
@@ -19,6 +19,14 @@ def setup_logger():
     if not os.path.exists('logs'):
         os.makedirs('logs')
 
+    # Generate timestamp-based filename if not provided
+    if log_filename is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"{timestamp}.log"
+
+    # Full path to log file
+    log_path = os.path.join('logs', log_filename)
+
     # Configure root logger
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -28,7 +36,7 @@ def setup_logger():
 
     # File handler with rotation and UTF-8 encoding
     file_handler = RotatingFileHandler(
-        'logs/monitor.log',
+        log_path,
         maxBytes=10 * 1024 * 1024,  # 10MB
         backupCount=5,
         encoding='utf-8'  # Fix Unicode issues
@@ -89,8 +97,10 @@ def setup_logger():
     file_handler.addFilter(chrome_filter)
     console_handler.addFilter(chrome_filter)
 
-    return logger
+    # Log the filename being used
+    logger.info(f"Logger initialized - Log file: {log_path}")
 
+    return logger
 
 def setup_inventory_logger():
     """Setup specialized logger for inventory changes - condensed format for AI analysis"""

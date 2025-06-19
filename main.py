@@ -49,7 +49,9 @@ class EnhancedBestBuyMonitor:
     """Enhanced Best Buy monitor with intelligent rate limiting and error handling"""
 
     def __init__(self):
-        self.logger = setup_logger()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"{timestamp}.log"
+        self.logger = setup_logger(log_filename=log_filename)
         self.running = False
         self.shutdown_requested = False
 
