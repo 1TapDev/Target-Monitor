@@ -1,7 +1,3 @@
-4. **Configure Discord**:
-   - Create a Discord webhook URL
-   - Update `discord_webhook_# Best Buy Stock Monitor
-
 A Python application that monitors Best Buy stock levels and sends Discord notifications when stock changes occur.
 
 ## Features
