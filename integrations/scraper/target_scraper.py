@@ -12,6 +12,7 @@ import re
 import concurrent.futures
 import os
 import sys
+import html
 from typing import Dict, Optional, Tuple, List
 import threading
 
@@ -136,13 +137,34 @@ class TargetScraper:
             return False
 
     def extract_product_name(self, full_name: str) -> str:
-        """Extract product name - for Target, usually return the full name as-is"""
+        """Extract product name using the specified rules"""
         if not full_name:
             return "Unknown Product"
 
         logger.debug(f"Extracting product name from: {full_name}")
 
-        # Check for error messages first
+        # Decode HTML entities first (&#38; -> &, &#34; -> ", etc.)
+        cleaned_name = html.unescape(full_name)
+
+        # Clean up the text - remove "This item is not available" and similar messages
+        cleanup_patterns = [
+            r"\s*This item is not available\s*",
+            r"\s*Currently unavailable\s*",
+            r"\s*Out of stock\s*",
+            r"\s*Not available\s*",
+            r"\s*Temporarily unavailable\s*",
+            r"\s*Item not available\s*",
+            r"\s*Product unavailable\s*",
+            r"\s*Unavailable\s*",
+        ]
+
+        for pattern in cleanup_patterns:
+            cleaned_name = re.sub(pattern, "", cleaned_name, flags=re.IGNORECASE).strip()
+
+        # Also remove any trailing/leading whitespace and normalize spaces
+        cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
+
+        # Check for error messages that indicate we should use SKU name instead
         error_patterns = [
             r"We're sorry, something went wrong",
             r"We\u2019re sorry, something went wrong",
@@ -153,14 +175,33 @@ class TargetScraper:
         ]
 
         for pattern in error_patterns:
-            if re.search(pattern, full_name, re.IGNORECASE):
-                logger.warning(f"Error page detected: {full_name}")
+            if re.search(pattern, cleaned_name, re.IGNORECASE):
+                logger.warning(f"Error page detected: {cleaned_name}")
                 return None  # Signal that we should use SKU name
 
-        # For Target products, typically return the full name
-        # You can add specific extraction rules here if needed
-        logger.debug(f"Using full name: {full_name}")
-        return full_name.strip()
+        # If after cleaning we have nothing left, return None
+        if not cleaned_name:
+            return None
+
+        # Rule 1: For "Pokémon - Trading Card Game: Scarlet & Violet - [name]"
+        pattern1 = r"Pokémon - Trading Card Game: Scarlet & Violet - (.+)"
+        match1 = re.search(pattern1, cleaned_name)
+        if match1:
+            extracted = match1.group(1).strip()
+            logger.debug(f"Matched pattern 1: {extracted}")
+            return extracted
+
+        # Rule 2: For "Pokémon - Trading Card Game: [name]"
+        pattern2 = r"Pokémon - Trading Card Game: (.+)"
+        match2 = re.search(pattern2, cleaned_name)
+        if match2:
+            extracted = match2.group(1).strip()
+            logger.debug(f"Matched pattern 2: {extracted}")
+            return extracted
+
+        # Rule 3: If no pattern matches, return the cleaned name
+        logger.debug(f"No pattern matched, using cleaned name: {cleaned_name}")
+        return cleaned_name
 
     def scrape_product_info(self, sku: str) -> Tuple[Optional[str], Optional[str]]:
         """Scrape product name and thumbnail URL for a given SKU from Target"""

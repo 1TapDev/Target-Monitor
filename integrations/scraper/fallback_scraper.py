@@ -2,9 +2,10 @@ import requests
 import re
 import time
 import logging
+import html
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
-from target_scraper import TargetScraper
+from integrations.scraper.target_scraper import TargetScraper
 
 logger = logging.getLogger(__name__)
 
@@ -30,23 +31,49 @@ class FallbackScraper:
 
         logger.debug(f"Extracting product name from: {full_name}")
 
-        # Check for error messages first
+        # Decode HTML entities first (&#38; -> &, &#34; -> ", etc.)
+        cleaned_name = html.unescape(full_name)
+
+        # Clean up the text - remove "This item is not available" and similar messages
+        cleanup_patterns = [
+            r"\s*This item is not available\s*",
+            r"\s*Currently unavailable\s*",
+            r"\s*Out of stock\s*",
+            r"\s*Not available\s*",
+            r"\s*Temporarily unavailable\s*",
+            r"\s*Item not available\s*",
+            r"\s*Product unavailable\s*",
+            r"\s*Unavailable\s*",
+        ]
+
+        for pattern in cleanup_patterns:
+            cleaned_name = re.sub(pattern, "", cleaned_name, flags=re.IGNORECASE).strip()
+
+        # Also remove any trailing/leading whitespace and normalize spaces
+        cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
+
+        # Check for error messages that indicate we should use SKU name instead
         error_patterns = [
             r"We're sorry, something went wrong",
             r"We\u2019re sorry, something went wrong",
             r"Were sorry, something went wrong",
             r"Page not found",
-            r"Product not available"
+            r"Product not available",
+            r"Item not found"
         ]
 
         for pattern in error_patterns:
-            if re.search(pattern, full_name, re.IGNORECASE):
-                logger.warning(f"Error page detected: {full_name}")
+            if re.search(pattern, cleaned_name, re.IGNORECASE):
+                logger.warning(f"Error page detected: {cleaned_name}")
                 return None  # Signal that we should use SKU name
+
+        # If after cleaning we have nothing left, return None
+        if not cleaned_name:
+            return None
 
         # Rule 1: For "Pokémon - Trading Card Game: Scarlet & Violet - [name]"
         pattern1 = r"Pokémon - Trading Card Game: Scarlet & Violet - (.+)"
-        match1 = re.search(pattern1, full_name)
+        match1 = re.search(pattern1, cleaned_name)
         if match1:
             extracted = match1.group(1).strip()
             logger.debug(f"Matched pattern 1: {extracted}")
@@ -54,19 +81,19 @@ class FallbackScraper:
 
         # Rule 2: For "Pokémon - Trading Card Game: [name]"
         pattern2 = r"Pokémon - Trading Card Game: (.+)"
-        match2 = re.search(pattern2, full_name)
+        match2 = re.search(pattern2, cleaned_name)
         if match2:
             extracted = match2.group(1).strip()
             logger.debug(f"Matched pattern 2: {extracted}")
             return extracted
 
-        # Rule 3: If no pattern matches, return the whole thing
-        logger.debug(f"No pattern matched, using full name: {full_name}")
-        return full_name.strip()
+        # Rule 3: If no pattern matches, return the cleaned name
+        logger.debug(f"No pattern matched, using cleaned name: {cleaned_name}")
+        return cleaned_name
 
     def scrape_product_info(self, sku: str) -> Tuple[Optional[str], Optional[str]]:
         """Scrape product info using requests and BeautifulSoup"""
-        url = f"https://www.target.com/site/{sku}.p"
+        url = f"https://www.target.com/p/-/A-{sku}"  # Correct Target format
 
         try:
             logger.info(f"Fallback scraping for SKU {sku} from {url}")
@@ -83,21 +110,46 @@ class FallbackScraper:
             try:
                 # Look for various title selectors
                 title_selectors = [
-                    'h1',
-                    '.sr-only-focusable',
-                    '[data-testid="product-title"]',
-                    '.product-title h1',
-                    '.pdp-product-name h1'
+                    "h1#pdp-product-title-id",
+                    "h1[data-test='product-title']",
+                    "h1.ProductTitle",
+                    "span[data-test='product-title']",
+                    "h1",
+                    "[class*='product-title']"
                 ]
 
                 title_element = None
+                text_content = ""
+
                 for selector in title_selectors:
                     title_element = soup.select_one(selector)
-                    if title_element and title_element.get_text().strip():
-                        break
+                    if title_element:
+                        # Get only the direct text content, not from child elements
+                        text_content = ""
 
-                if title_element:
-                    full_name = title_element.get_text().strip()
+                        # Try to get just the main text, excluding child elements
+                        for content in title_element.contents:
+                            if hasattr(content, 'strip'):  # It's a text node
+                                text_content += content.strip() + " "
+                            elif hasattr(content, 'get_text'):  # It's an element
+                                # Only include if it's not a status message
+                                child_text = content.get_text().strip()
+                                if not any(phrase in child_text.lower() for phrase in [
+                                    'not available', 'unavailable', 'out of stock'
+                                ]):
+                                    text_content += child_text + " "
+
+                        text_content = text_content.strip()
+
+                        # Fallback to full text if we didn't get anything
+                        if not text_content:
+                            text_content = title_element.get_text().strip()
+
+                        if text_content:
+                            break
+
+                if title_element and text_content:
+                    full_name = text_content
                     logger.info(f"Raw product title found: {full_name}")
 
                     extracted_name = self.extract_product_name(full_name)
@@ -119,12 +171,12 @@ class FallbackScraper:
             try:
                 # Look for product images
                 img_selectors = [
-                    'img[src*="bbystatic"]',
-                    'img[src*="pisces"]',
-                    '.primary-image img',
-                    '.product-image img',
-                    'img[alt*="Front"]',
-                    '.carousel img'
+                    'img[src*="target.scene7.com"]',  # Target CDN
+                    'img[src*="Target/"]',  # Target images
+                    '#PdpImageGallerySection img',  # Target gallery
+                    'img[data-test*="product"]',  # Product images
+                    'img[alt*="product"]',  # Alt text
+                    'picture img',  # Picture elements
                 ]
 
                 img_element = None
@@ -305,7 +357,7 @@ class EnhancedProductInfoUpdater:
                         logger.info(f"No updates needed for SKU {sku}")
 
                     # Add delay between requests
-                    time.sleep(3)
+                    time.sleep(10)
 
                 except Exception as e:
                     logger.error(f"Error processing SKU {sku}: {e}")
