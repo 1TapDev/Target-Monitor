@@ -19,6 +19,16 @@ class DiscordHandler:
             'NY': '<@&1348464319154753546>',  # New York role
             'GA': '<@&1348464394039721994>'  # Georgia role
         }
+        # Target brand colors
+        self.colors = {
+            'restock': 0xCC0000,  # Target Red for restocks
+            'out_of_stock': 0x8B0000,  # Dark Red for out of stock
+            'increase': 0xFF4500,  # Orange Red for increases
+            'decrease': 0xDC143C,  # Crimson for decreases
+            'initial': 0xCC0000,  # Target Red for initial reports
+            'info': 0xB22222,  # Fire Brick for general info
+            'error': 0x800000  # Maroon for errors
+        }
         # Load products initially
         self._load_products()
 
@@ -66,9 +76,9 @@ class DiscordHandler:
         """Create a default products.json file"""
         try:
             default_products = {
-                "6624827": {
-                    "name": "Destined Rivals Sleeved Booster",
-                    "thumbnail_url": "https://media.gamestop.com/i/gamestop/20021588",
+                "94693225": {
+                    "name": "Nintendo Switch 2 Console",
+                    "thumbnail_url": "",
                     "send_initial": False
                 }
             }
@@ -108,7 +118,7 @@ class DiscordHandler:
         if not product:
             logger.warning(f"SKU {sku} not found in {self.products_file}, creating placeholder entry")
             placeholder_product = {
-                "name": f"Unknown Product (SKU: {sku})",
+                "name": f"Target Product {sku}",
                 "thumbnail_url": "",
                 "send_initial": True  # Default to sending initial reports for new SKUs
             }
@@ -120,15 +130,44 @@ class DiscordHandler:
             product = placeholder_product
 
         return {
-            'name': product.get('name', f'SKU {sku}'),
+            'name': product.get('name', f'Target Product {sku}'),
             'thumbnail_url': product.get('thumbnail_url', ''),
-            'url': f'https://www.bestbuy.com/site/{sku}.p',
+            'url': f'https://www.target.com/p/-/A-{sku}',
             'send_initial': product.get('send_initial', True)  # Default to True if not specified
         }
 
     def _get_location_tag(self, state: str) -> str:
         """Get the appropriate role tag for a location"""
         return self.location_roles.get(state, '')
+
+    def _format_target_store_name(self, store_name: str) -> str:
+        """Format Target store names for better readability"""
+        if not store_name:
+            return "Unknown Store"
+
+        # Clean up common Target store name patterns
+        formatted_name = store_name.strip()
+
+        # Add "Target" prefix if not present
+        if not formatted_name.lower().startswith('target'):
+            formatted_name = f"Target {formatted_name}"
+
+        return formatted_name
+
+    def _get_stock_emoji_and_status(self, current_qty: int, previous_qty: int) -> tuple:
+        """Get appropriate emoji and status text for Target stock changes"""
+        prev_qty = previous_qty if previous_qty is not None else 0
+
+        if current_qty > 0 and prev_qty == 0:
+            return "🔴🎯", "RESTOCK ALERT", self.colors['restock']
+        elif current_qty == 0 and prev_qty > 0:
+            return "❌🎯", "OUT OF STOCK", self.colors['out_of_stock']
+        elif current_qty > prev_qty:
+            return "📈🎯", "STOCK INCREASE", self.colors['increase']
+        elif current_qty < prev_qty:
+            return "📉🎯", "STOCK DECREASE", self.colors['decrease']
+        else:
+            return "🎯", "NO CHANGE", self.colors['info']
 
     def reload_products(self):
         """Force reload products.json (useful for testing)"""
@@ -169,29 +208,23 @@ class DiscordHandler:
             return True  # Default to True if error
 
     def send_stock_alert(self, sku: str, store_data: Dict, previous_qty: Optional[int], current_qty: int):
-        """Send a stock change alert with location tagging"""
+        """Send a Target stock change alert with red theme and location tagging"""
 
         # Handle None previous quantity
         prev_qty = previous_qty if previous_qty is not None else 0
 
-        # Determine status and color
-        if current_qty > 0 and prev_qty == 0:
-            status = "🟢 RESTOCK"
-            color = 0x00ff00  # Green
-        elif current_qty == 0 and prev_qty > 0:
-            status = "🔴 OUT OF STOCK"
-            color = 0xff0000  # Red
-        elif current_qty > prev_qty:
-            status = "📈 STOCK INCREASE"
-            color = 0x00ff00  # Green
-        elif current_qty < prev_qty:
-            status = "📉 STOCK DECREASE"
-            color = 0xffa500  # Orange
-        else:
-            return  # No change, don't send
+        # Get emoji, status, and color for this change
+        emoji, status, color = self._get_stock_emoji_and_status(current_qty, prev_qty)
+
+        # Skip if no actual change
+        if current_qty == prev_qty:
+            return
 
         # Get product info (this will now check for file changes)
         product_info = self._get_product_info(sku)
+
+        # Format store name with Target branding
+        store_name = self._format_target_store_name(store_data.get('name', 'Unknown'))
 
         # Format address
         address = store_data.get('address', '')
@@ -203,65 +236,78 @@ class DiscordHandler:
         # Get location tag based on state
         location_tag = self._get_location_tag(state)
 
-        # Create fields for the store alert
+        # Target-specific stock quantity formatting
+        def format_quantity(qty):
+            if qty == 0:
+                return "❌ Out of Stock"
+            elif qty >= 100:
+                return "🟢 99+ in stock"
+            elif qty >= 10:
+                return f"🟡 {qty} in stock"
+            else:
+                return f"🟠 {qty} in stock"
+
+        # Create fields for the store alert with Target-specific formatting
         fields = [
             {
-                "name": "**Status**",
-                "value": status,
+                "name": "🎯 **Status**",
+                "value": f"**{status}**",
                 "inline": True
             },
             {
-                "name": "**Store**",
-                "value": store_data.get('name', 'Unknown'),
+                "name": "🏪 **Store Location**",
+                "value": store_name,
                 "inline": True
             },
             {
-                "name": "**Distance**",
+                "name": "📍 **Distance**",
                 "value": f"{store_data.get('distance', 0):.1f} miles",
                 "inline": True
             },
             {
-                "name": "**Previous Stock**",
-                "value": str(prev_qty),
+                "name": "📊 **Previous Stock**",
+                "value": format_quantity(prev_qty),
                 "inline": True
             },
             {
-                "name": "**Current Stock**",
-                "value": str(current_qty),
+                "name": "📦 **Current Stock**",
+                "value": format_quantity(current_qty),
                 "inline": True
             },
             {
-                "name": "**Phone**",
+                "name": "📞 **Store Phone**",
                 "value": store_data.get('phone', 'N/A'),
                 "inline": True
             },
             {
-                "name": "**Address**",
+                "name": "🗺️ **Full Address**",
                 "value": full_address,
                 "inline": False
             },
             {
-                "name": "SKU",
-                "value": sku,
+                "name": "🔢 Product SKU",
+                "value": f"`{sku}`",
                 "inline": True
             },
             {
-                "name": "Store ID",
-                "value": store_data.get('id', 'Unknown'),
+                "name": "🏬 Store ID",
+                "value": f"`{store_data.get('id', 'Unknown')}`",
                 "inline": True
             }
         ]
 
         embed = {
-            "title": f"🚨 {product_info['name']} - Stock Alert",
+            "title": f"{emoji} {product_info['name']}",
             "url": product_info['url'],
             "color": color,
             "fields": fields,
             "author": {
-                "name": "BestBuy Stock Checker"
+                "name": "🎯 Target Stock Monitor",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "footer": {
-                "text": f"Best Buy Stock Monitor • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                "text": f"Target Stock Alert • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -270,28 +316,36 @@ class DiscordHandler:
         if product_info['thumbnail_url']:
             embed["thumbnail"] = {"url": product_info['thumbnail_url']}
 
-        # Prepare webhook payload with custom username and avatar, and location tagging
+        # Prepare webhook payload with Target branding and location tagging
         content = location_tag if location_tag else ""
 
         payload = {
             "content": content,
             "embeds": [embed],
-            "username": "BestBuy",
-            "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
         }
 
         # Log the alert being sent
-        logger.info(f"ALERT SENT: {status} - {store_data.get('name', 'Unknown')} - SKU {sku}")
+        logger.info(f"TARGET ALERT: {status} - {store_name} - SKU {sku}")
         self._send_webhook_payload(payload)
 
     def send_store_list(self, sku: str, zip_code: str, stores_data: List[Dict]):
-        """Send a full store list (Your custom format with fields)"""
+        """Send a full Target store list with red theme formatting"""
 
         if not stores_data:
             embed = {
-                "title": "Best Buy Stock Information",
-                "description": f"No stores found for SKU: {sku} near {zip_code}",
-                "color": 0xff0000,
+                "title": "🎯 Target Stock Information",
+                "description": f"No Target stores found for SKU: `{sku}` near ZIP code `{zip_code}`",
+                "color": self.colors['error'],
+                "author": {
+                    "name": "🎯 Target Stock Monitor",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
+                "footer": {
+                    "text": f"Target Stock Monitor • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
                 "timestamp": datetime.utcnow().isoformat()
             }
             self._send_webhook(embed)
@@ -300,42 +354,49 @@ class DiscordHandler:
         # Sort by distance
         stores_data.sort(key=lambda x: x.get('distance', 999))
 
-        # Get product info (this will now check for file changes)
+        # Get product info
         product_info = self._get_product_info(sku)
 
         # Check if all stores are out of stock
         stores_with_stock = [store for store in stores_data if store.get('quantity', 0) > 0]
 
         if not stores_with_stock:
-            # All stores are out of stock - send simplified message
+            # All stores are out of stock - send Target-themed message
             fields = [
                 {
-                    "name": "**Status**",
-                    "value": "All nearby locations are out of stock",
+                    "name": "❌ **Stock Status**",
+                    "value": "All nearby Target locations are currently out of stock",
                     "inline": False
                 },
                 {
-                    "name": "**SKU**",
-                    "value": sku,
+                    "name": "🔢 **Product SKU**",
+                    "value": f"`{sku}`",
                     "inline": True
                 },
                 {
-                    "name": "**Checked ZIP**",
-                    "value": zip_code,
+                    "name": "📍 **Search Area**",
+                    "value": f"ZIP {zip_code}",
+                    "inline": True
+                },
+                {
+                    "name": "🏪 **Stores Checked**",
+                    "value": f"{len(stores_data)} Target locations",
                     "inline": True
                 }
             ]
 
             embed = {
-                "title": product_info['name'],
+                "title": f"🎯 {product_info['name']}",
                 "url": product_info['url'],
-                "color": 0xff0000,  # Red for out of stock
+                "color": self.colors['out_of_stock'],
                 "fields": fields,
                 "author": {
-                    "name": "BestBuy Stock Checker"
+                    "name": "🎯 Target Stock Monitor",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
                 },
                 "footer": {
-                    "text": f"Best Buy Stock Monitor • Powered by BestBuy API • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                    "text": f"Target Stock Monitor • Powered by Target API • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
                 },
                 "timestamp": datetime.utcnow().isoformat()
             }
@@ -344,63 +405,76 @@ class DiscordHandler:
             if product_info['thumbnail_url']:
                 embed["thumbnail"] = {"url": product_info['thumbnail_url']}
 
-            # Prepare webhook payload with custom username and avatar
             payload = {
                 "embeds": [embed],
-                "username": "BestBuy",
-                "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+                "username": "🎯 Target Monitor",
+                "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             }
 
-            logger.info(f"STORE LIST: SKU {sku} - All stores out of stock")
+            logger.info(f"TARGET STORE LIST: SKU {sku} - All stores out of stock")
             self._send_webhook_payload(payload)
             return
 
-        # Some stores have stock - show normal format
-        # Create fields for each store (your requested format)
+        # Some stores have stock - show Target-themed format
         fields = []
 
-        for store in stores_data[:25]:  # Limit to 25 stores (Discord limit minus SKU/ZIP fields)
-            name = store.get('name', 'Unknown')
+        for store in stores_data[:23]:  # Limit to 23 stores to leave room for SKU/ZIP fields
+            name = self._format_target_store_name(store.get('name', 'Unknown'))
             stock = store.get('quantity', 0)
             distance = store.get('distance', 0)
 
+            # Target-specific stock display
             if stock == 0:
-                stock_display = "0"
-            elif stock > 100:
-                stock_display = "9999"
+                stock_display = "❌ Out of Stock"
+                stock_emoji = "❌"
+            elif stock >= 100:
+                stock_display = "🟢 99+"
+                stock_emoji = "🟢"
+            elif stock >= 10:
+                stock_display = f"🟡 {stock}"
+                stock_emoji = "🟡"
             else:
-                stock_display = str(stock)
+                stock_display = f"🟠 {stock}"
+                stock_emoji = "🟠"
 
             fields.append({
-                "name": f"**{name}**",
-                "value": f"Stock: {stock_display}\nDistance: {distance:.1f}",
+                "name": f"{stock_emoji} **{name}**",
+                "value": f"Stock: {stock_display}\nDistance: {distance:.1f} mi",
                 "inline": True
             })
 
-        # Add SKU and ZIP fields at the end
+        # Add summary fields
         fields.extend([
             {
-                "name": "SKU",
-                "value": sku,
+                "name": "🔢 Product SKU",
+                "value": f"`{sku}`",
                 "inline": True
             },
             {
-                "name": "Checked ZIP",
-                "value": zip_code,
+                "name": "📍 Search ZIP",
+                "value": f"`{zip_code}`",
+                "inline": True
+            },
+            {
+                "name": "📊 Stock Summary",
+                "value": f"{len(stores_with_stock)} of {len(stores_data)} stores have stock",
                 "inline": True
             }
         ])
 
         embed = {
-            "title": product_info['name'],
+            "title": f"🎯 {product_info['name']}",
             "url": product_info['url'],
-            "color": 255,
+            "color": self.colors['info'],
             "fields": fields,
+            "description": f"**Target Stock Report** • Found {len(stores_with_stock)} stores with inventory",
             "author": {
-                "name": "BestBuy Stock Checker"
+                "name": "🎯 Target Stock Monitor",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "footer": {
-                "text": f"Best Buy Stock Monitor • Powered by BestBuy API • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                "text": f"Target Stock Monitor • Powered by Target API • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -409,18 +483,17 @@ class DiscordHandler:
         if product_info['thumbnail_url']:
             embed["thumbnail"] = {"url": product_info['thumbnail_url']}
 
-        # Prepare webhook payload with custom username and avatar
         payload = {
             "embeds": [embed],
-            "username": "BestBuy",
-            "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
         }
 
-        logger.info(f"STORE LIST: SKU {sku} - {len(stores_with_stock)} stores with stock")
+        logger.info(f"TARGET STORE LIST: SKU {sku} - {len(stores_with_stock)} stores with stock")
         self._send_webhook_payload(payload)
 
     def send_initial_stock_report(self, sku: str, zip_code: str, stores_with_stock: List[Dict]):
-        """Send initial stock report using the new field format"""
+        """Send initial Target stock report with red theme"""
 
         if not stores_with_stock:
             return
@@ -428,52 +501,66 @@ class DiscordHandler:
         # Sort by distance
         stores_with_stock.sort(key=lambda x: x.get('distance', 999))
 
-        # Get product info (this will now check for file changes)
+        # Get product info
         product_info = self._get_product_info(sku)
 
         # Create fields for each store with stock
         fields = []
 
-        for store in stores_with_stock[:25]:  # Limit to 25 stores
-            name = store.get('name', 'Unknown')
+        for store in stores_with_stock[:23]:  # Limit to 23 stores
+            name = self._format_target_store_name(store.get('name', 'Unknown'))
             stock = store.get('quantity', 0)
             distance = store.get('distance', 0)
 
-            if stock > 100:
-                stock_display = "9999"
+            # Target stock formatting
+            if stock >= 100:
+                stock_display = "🟢 99+"
+                stock_emoji = "🟢"
+            elif stock >= 10:
+                stock_display = f"🟡 {stock}"
+                stock_emoji = "🟡"
             else:
-                stock_display = str(stock)
+                stock_display = f"🟠 {stock}"
+                stock_emoji = "🟠"
 
             fields.append({
-                "name": f"**{name}**",
-                "value": f"Stock: {stock_display}\nDistance: {distance:.1f}",
+                "name": f"{stock_emoji} **{name}**",
+                "value": f"Stock: {stock_display}\nDistance: {distance:.1f} mi",
                 "inline": True
             })
 
-        # Add SKU and ZIP fields at the end
+        # Add summary fields
         fields.extend([
             {
-                "name": "SKU",
-                "value": sku,
+                "name": "🔢 Product SKU",
+                "value": f"`{sku}`",
                 "inline": True
             },
             {
-                "name": "ZIP Code",
-                "value": zip_code,
+                "name": "📍 Search ZIP",
+                "value": f"`{zip_code}`",
+                "inline": True
+            },
+            {
+                "name": "📦 Total Stock",
+                "value": f"{sum(store.get('quantity', 0) for store in stores_with_stock)} units",
                 "inline": True
             }
         ])
 
         embed = {
-            "title": f"📦 {product_info['name']} - Initial Stock",
+            "title": f"🎯📦 {product_info['name']} - Initial Stock Report",
             "url": product_info['url'],
-            "color": 0x00ff00,
+            "color": self.colors['initial'],
             "fields": fields,
+            "description": f"**Initial Target Stock Scan** • Found {len(stores_with_stock)} stores with inventory",
             "author": {
-                "name": "BestBuy Stock Checker"
+                "name": "🎯 Target Stock Monitor",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "footer": {
-                "text": f"Best Buy Stock Monitor • Initial scan complete • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                "text": f"Target Stock Monitor • Initial scan complete • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -482,27 +569,35 @@ class DiscordHandler:
         if product_info['thumbnail_url']:
             embed["thumbnail"] = {"url": product_info['thumbnail_url']}
 
-        if len(stores_with_stock) > 25:
-            embed["description"] = f"*Showing first 25 stores. {len(stores_with_stock) - 25} more stores have stock.*"
+        if len(stores_with_stock) > 23:
+            embed[
+                "description"] += f"\n*Showing first 23 stores. {len(stores_with_stock) - 23} more stores have stock.*"
 
-        # Prepare webhook payload with custom username and avatar
         payload = {
             "embeds": [embed],
-            "username": "BestBuy",
-            "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
         }
 
-        logger.info(f"INITIAL STOCK: SKU {sku}, ZIP {zip_code} - {len(stores_with_stock)} stores")
+        logger.info(f"TARGET INITIAL STOCK: SKU {sku}, ZIP {zip_code} - {len(stores_with_stock)} stores")
         self._send_webhook_payload(payload)
 
     def send_location_stock_summary(self, zip_code: str, location_stores: List[Dict]):
-        """Send a summary of all products with stock at a specific location"""
+        """Send a Target location stock summary with red theme"""
 
         if not location_stores:
             embed = {
-                "title": f"📍 Stock Summary for ZIP {zip_code}",
-                "description": "No stores found near this ZIP code or ZIP code not found.",
-                "color": 0xff0000,
+                "title": f"🎯📍 Target Stock Summary for ZIP {zip_code}",
+                "description": "No Target stores found near this ZIP code.",
+                "color": self.colors['error'],
+                "author": {
+                    "name": "🎯 Target Stock Monitor",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
+                "footer": {
+                    "text": f"Target Stock Monitor • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
                 "timestamp": datetime.utcnow().isoformat()
             }
             self._send_webhook(embed)
@@ -534,52 +629,79 @@ class DiscordHandler:
         for sku, data in sku_summary.items():
             if data['stores_with_stock'] > 0:
                 skus_with_stock += 1
+
+                # Target stock formatting
+                total_qty = data['total_quantity']
+                if total_qty >= 100:
+                    qty_display = "🟢 99+"
+                elif total_qty >= 50:
+                    qty_display = f"🟡 {total_qty}"
+                else:
+                    qty_display = f"🟠 {total_qty}"
+
                 fields.append({
-                    "name": f"**{data['name']}**",
-                    "value": f"SKU: {sku}\nStores: {data['stores_with_stock']}\nTotal Stock: {data['total_quantity']}",
+                    "name": f"🎯 **{data['name']}**",
+                    "value": f"SKU: `{sku}`\nStores: {data['stores_with_stock']}\nTotal Stock: {qty_display}",
                     "inline": True
                 })
 
         if not fields:
             embed = {
-                "title": f"📍 Stock Summary for ZIP {zip_code}",
-                "description": "No products currently in stock at nearby locations.",
-                "color": 0xff0000,
+                "title": f"🎯📍 Target Stock Summary for ZIP {zip_code}",
+                "description": "No products currently in stock at nearby Target locations.",
+                "color": self.colors['out_of_stock'],
+                "author": {
+                    "name": "🎯 Target Stock Monitor",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
+                "footer": {
+                    "text": f"Target Stock Monitor • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
                 "timestamp": datetime.utcnow().isoformat()
             }
         else:
             embed = {
-                "title": f"📍 Stock Summary for ZIP {zip_code}",
-                "description": f"Found **{skus_with_stock}** products with stock across **{total_stores_with_stock}** store locations",
-                "color": 0x00ff00,
+                "title": f"🎯📍 Target Stock Summary for ZIP {zip_code}",
+                "description": f"Found **{skus_with_stock}** products with stock across **{total_stores_with_stock}** Target store locations",
+                "color": self.colors['info'],
                 "fields": fields,
                 "author": {
-                    "name": "BestBuy Stock Checker"
+                    "name": "🎯 Target Stock Monitor",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
                 },
                 "footer": {
-                    "text": f"Best Buy Stock Monitor • Location Summary • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                    "text": f"Target Stock Monitor • Location Summary • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
                 },
                 "timestamp": datetime.utcnow().isoformat()
             }
 
-        # Prepare webhook payload
         payload = {
             "embeds": [embed],
-            "username": "BestBuy",
-            "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
         }
 
-        logger.info(f"LOCATION SUMMARY: ZIP {zip_code} - {skus_with_stock} products with stock")
+        logger.info(f"TARGET LOCATION SUMMARY: ZIP {zip_code} - {skus_with_stock} products with stock")
         self._send_webhook_payload(payload)
 
     def send_stores_near_location(self, zip_code: str, stores: List[Dict]):
-        """Send a list of all stores near a location"""
+        """Send a list of Target stores near a location with red theme"""
 
         if not stores:
             embed = {
-                "title": f"🏪 Stores Near ZIP {zip_code}",
-                "description": "No Best Buy stores found within 100 miles of this ZIP code or ZIP code not found.",
-                "color": 0xff0000,
+                "title": f"🎯🏪 Target Stores Near ZIP {zip_code}",
+                "description": "No Target stores found within 100 miles of this ZIP code.",
+                "color": self.colors['error'],
+                "author": {
+                    "name": "🎯 Target Store Locator",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
+                "footer": {
+                    "text": f"Target Store Locator • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                    "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+                },
                 "timestamp": datetime.utcnow().isoformat()
             }
             self._send_webhook(embed)
@@ -591,39 +713,41 @@ class DiscordHandler:
         # Create fields for each store
         fields = []
 
-        for store in stores[:25]:  # Limit to 25 stores (Discord limit)
-            name = store.get('store_name', store.get('name', 'Unknown'))
+        for store in stores[:25]:  # Limit to 25 stores
+            name = self._format_target_store_name(store.get('store_name', store.get('name', 'Unknown')))
             store_zip = store.get('zip_code', 'Unknown')
+            distance = store.get('distance', 0)
 
             fields.append({
-                "name": f"**{name}**",
-                "value": f"ZIP: {store_zip}",
+                "name": f"🎯 **{name}**",
+                "value": f"ZIP: `{store_zip}`\nDistance: {distance:.1f} mi",
                 "inline": True
             })
 
         embed = {
-            "title": f"🏪 Best Buy Stores Near ZIP {zip_code}",
-            "description": f"Found **{len(stores)}** stores within 100 miles" + (
+            "title": f"🎯🏪 Target Stores Near ZIP {zip_code}",
+            "description": f"Found **{len(stores)}** Target stores within 100 miles" + (
                 f" (showing first 25)" if len(stores) > 25 else ""),
-            "color": 0x0066cc,
+            "color": self.colors['info'],
             "fields": fields,
             "author": {
-                "name": "BestBuy Stock Checker"
+                "name": "🎯 Target Store Locator",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "footer": {
-                "text": f"Best Buy Stock Monitor • Store Locator • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}"
+                "text": f"Target Store Locator • {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+                "icon_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
 
-        # Prepare webhook payload
         payload = {
             "embeds": [embed],
-            "username": "BestBuy",
-            "avatar_url": "https://us1-photo.nextdoor.com/business_logo/b9/e8/b9e8bb8b4990e4b61213d97f8f843757.jpg"
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
         }
 
-        logger.info(f"STORES NEAR: ZIP {zip_code} - {len(stores)} stores found")
+        logger.info(f"TARGET STORES NEAR: ZIP {zip_code} - {len(stores)} stores found")
         self._send_webhook_payload(payload)
 
     def _send_webhook_payload(self, payload: Dict):
@@ -655,9 +779,11 @@ class DiscordHandler:
                 # Set the attachment URL in the embed
                 embed["thumbnail"] = {"url": "attachment://image.webp"}
 
-            # Prepare the payload
+            # Prepare the payload with Target branding
             payload = {
-                "embeds": [embed]
+                "embeds": [embed],
+                "username": "🎯 Target Monitor",
+                "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
             }
 
             if files:
@@ -684,4 +810,9 @@ class DiscordHandler:
 
     def _send_webhook(self, embed: Dict):
         """Send webhook to Discord without image"""
-        self._send_webhook_payload({"embeds": [embed]})
+        payload = {
+            "embeds": [embed],
+            "username": "🎯 Target Monitor",
+            "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+        }
+        self._send_webhook_payload(payload)

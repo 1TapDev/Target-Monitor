@@ -24,11 +24,11 @@ try:
     from utils.logger import setup_logger, setup_inventory_logger, log_inventory_change
     from utils.config import ConfigLoader
     from data.database import DatabaseManager
-    from api.bestbuy_api import BestBuyAPI
+    from api.target_api import TargetAPI
     from integrations.discord_handler import DiscordHandler
     from commands.command_handler import CommandHandler
     from integrations.discord_bot import run_discord_bot, stop_discord_bot
-    from integrations.scraper.bestbuy_scraper import ProductInfoUpdater
+    from integrations.scraper.target_scraper import ProductInfoUpdater
     from core.rate_limiter import EnhancedRateLimiter, RateLimitConfig
     from core.request_queue import SmartRequestQueue, RequestPriority
 except ImportError as e:
@@ -45,8 +45,8 @@ except ImportError:
     USE_ENHANCED_SCRAPER = False
 
 
-class EnhancedBestBuyMonitor:
-    """Enhanced Best Buy monitor with intelligent rate limiting and error handling"""
+class EnhancedTargetMonitor:
+    """Enhanced Target monitor with intelligent rate limiting and error handling"""
 
     def __init__(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -132,7 +132,7 @@ class EnhancedBestBuyMonitor:
             self.db_manager.create_tables()
 
             # Initialize API client
-            self.api = BestBuyAPI()
+            self.api = TargetAPI()
 
             # Set cache-busting if available
             if hasattr(self.api, 'set_cache_busting'):
@@ -158,11 +158,11 @@ class EnhancedBestBuyMonitor:
             # Calculate and log monitoring plan
             self._log_monitoring_plan()
 
-            self.logger.info("Enhanced monitor initialized successfully")
+            self.logger.info("Enhanced Target monitor initialized successfully")
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to initialize monitor: {e}")
+            self.logger.error(f"Failed to initialize Target monitor: {e}")
             return False
 
     def _validate_config(self) -> bool:
@@ -225,7 +225,7 @@ class EnhancedBestBuyMonitor:
         cycles_per_day = 86400 / self.config.monitoring_interval
         daily_requests = requests_per_cycle * cycles_per_day
 
-        self.logger.info("Enhanced Monitoring Plan:")
+        self.logger.info("Enhanced Target Monitoring Plan:")
         self.logger.info(f"  - SKUs: {len(self.config.skus)}")
         self.logger.info(f"  - ZIP codes: {len(self.config.zip_codes)}")
         self.logger.info(f"  - Requests per cycle: {requests_per_cycle}")
@@ -246,7 +246,7 @@ class EnhancedBestBuyMonitor:
 
     def monitor_loop(self):
         """Enhanced monitoring loop with intelligent request queuing"""
-        self.logger.info("Starting enhanced monitoring loop with intelligent rate limiting")
+        self.logger.info("Starting enhanced Target monitoring loop with intelligent rate limiting")
         self.stats['start_time'] = datetime.now()
 
         # If test mode, run fewer cycles
@@ -385,7 +385,7 @@ class EnhancedBestBuyMonitor:
                 try:
                     # Use database lock for thread safety
                     with self.db_lock:
-                        changed, previous_qty = self.db_manager.update_stock(sku, store)
+                        changed, previous_qty = self.db_manager.update_stock(sku, store, 'target')
 
                     current_qty = self.api.get_store_quantity(store)
 
@@ -472,10 +472,10 @@ class EnhancedBestBuyMonitor:
             sku_zip_key = f"{sku}_{zip_code}"
 
             # Check if this SKU has EVER been seen in the database
-            is_completely_new_product = not self.db_manager.has_sku_been_seen(sku)
+            is_completely_new_product = not self.db_manager.has_sku_been_seen(sku, 'target')
 
             # Check if this specific SKU-ZIP combination has stores in database
-            existing_stores_for_this_zip = self.db_manager.get_stores_for_sku_zip(sku, zip_code)
+            existing_stores_for_this_zip = self.db_manager.get_stores_for_sku_zip(sku, zip_code, 'target')
             is_new_sku_zip_combination = len(existing_stores_for_this_zip) == 0
 
             # Check if initial stock report should be sent
@@ -485,7 +485,7 @@ class EnhancedBestBuyMonitor:
             product_allows_initial = self.discord_handler.should_send_initial_report(sku)
 
             # Check database flag
-            initial_already_sent = self.db_manager.has_initial_report_been_sent(sku, zip_code)
+            initial_already_sent = self.db_manager.has_initial_report_been_sent(sku, zip_code, 'target')
 
             if not product_allows_initial:
                 self.logger.debug(f"Initial reports disabled in products.json for SKU {sku}")
@@ -504,11 +504,11 @@ class EnhancedBestBuyMonitor:
                 self.discord_handler.send_initial_stock_report(sku, zip_code, stores_with_stock)
 
                 # Mark as sent in database to prevent future sends
-                self.db_manager.mark_initial_report_sent(sku, zip_code)
+                self.db_manager.mark_initial_report_sent(sku, zip_code, 'target')
                 self.initial_stock_sent.add(sku_zip_key)
             elif existing_stores_for_this_zip and stores_with_stock and not initial_already_sent:
                 # First time running but data exists - mark as sent to prevent future sends
-                self.db_manager.mark_initial_report_sent(sku, zip_code)
+                self.db_manager.mark_initial_report_sent(sku, zip_code, 'target')
                 self.logger.debug(f"Marked existing SKU {sku}, ZIP {zip_code} as having initial report sent")
 
         except Exception as e:
@@ -660,8 +660,8 @@ class EnhancedBestBuyMonitor:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         mode_text = "TEST MODE" if test_mode else "PRODUCTION MODE"
-        print(f"✅ Enhanced Best Buy Monitor is running in {mode_text}...")
-        print("📊 Enhanced monitoring configuration:")
+        print(f"✅ Enhanced Target Monitor is running in {mode_text}...")
+        print("📊 Enhanced Target monitoring configuration:")
         print(f"   • SKUs: {len(self.config.skus)}")
         print(f"   • ZIP Codes: {', '.join(self.config.zip_codes)}")
         print(f"   • Check interval: {self.config.monitoring_interval} seconds")
@@ -703,7 +703,7 @@ class EnhancedBestBuyMonitor:
 
     def stop(self):
         """Stop the enhanced monitor"""
-        self.logger.info("Stopping enhanced monitor...")
+        self.logger.info("Stopping enhanced Target monitor...")
         self.running = False
         self.shutdown_requested = True
 
@@ -721,7 +721,7 @@ class EnhancedBestBuyMonitor:
 
     def cleanup(self):
         """Clean up resources"""
-        self.logger.info("Cleaning up enhanced monitor resources...")
+        self.logger.info("Cleaning up enhanced Target monitor resources...")
 
         try:
             # Stop request queue
@@ -766,7 +766,7 @@ class EnhancedBestBuyMonitor:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
-        self.logger.info("Enhanced monitor stopped")
+        self.logger.info("Enhanced Target monitor stopped")
 
     def _log_final_stats(self):
         """Log final enhanced monitoring statistics"""
@@ -795,11 +795,11 @@ class EnhancedBestBuyMonitor:
     def run_command(self, sku: str, zip_code: str):
         """Run a one-time command check with enhanced rate limiting"""
         if not self.initialize():
-            print("Failed to initialize enhanced monitor")
+            print("Failed to initialize enhanced Target monitor")
             return
 
         try:
-            print(f"Running enhanced command check for SKU {sku}, ZIP {zip_code}")
+            print(f"Running enhanced Target command check for SKU {sku}, ZIP {zip_code}")
 
             # Process single request with rate limiting
             result = self._process_sku_zip_request(sku, zip_code)
@@ -812,7 +812,7 @@ class EnhancedBestBuyMonitor:
 
                 # Send Discord notification
                 try:
-                    command_result = self.command_handler.bestbuy_command(sku, zip_code, send_webhook=True)
+                    command_result = self.command_handler.target_command(sku, zip_code, send_webhook=True)
                     print(f"📢 Discord notification: {command_result['message']}")
                 except Exception as e:
                     print(f"❌ Discord notification failed: {e}")
@@ -878,7 +878,7 @@ def main():
     """Enhanced main entry point"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Enhanced Best Buy Stock Monitor')
+    parser = argparse.ArgumentParser(description='Enhanced Target Stock Monitor')
     parser.add_argument('--command', action='store_true', help='Run in command mode')
     parser.add_argument('--sku', type=str, help='SKU to check (command mode only)')
     parser.add_argument('--zip', type=str, help='ZIP code to check (command mode only)')
@@ -888,7 +888,7 @@ def main():
 
     args = parser.parse_args()
 
-    monitor = EnhancedBestBuyMonitor()
+    monitor = EnhancedTargetMonitor()
 
     if args.health:
         # Quick health check

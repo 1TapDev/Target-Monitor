@@ -18,7 +18,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 
-class BestBuyScraper:
+class TargetScraper:
     def __init__(self):
         self.driver = None
         self.wait = None
@@ -136,7 +136,7 @@ class BestBuyScraper:
             return False
 
     def extract_product_name(self, full_name: str) -> str:
-        """Extract product name using the specified rules"""
+        """Extract product name - for Target, usually return the full name as-is"""
         if not full_name:
             return "Unknown Product"
 
@@ -148,7 +148,8 @@ class BestBuyScraper:
             r"We\u2019re sorry, something went wrong",
             r"Were sorry, something went wrong",
             r"Page not found",
-            r"Product not available"
+            r"Product not available",
+            r"Item not found"
         ]
 
         for pattern in error_patterns:
@@ -156,60 +157,22 @@ class BestBuyScraper:
                 logger.warning(f"Error page detected: {full_name}")
                 return None  # Signal that we should use SKU name
 
-        # Rule 1: For "Pokémon - Trading Card Game: Scarlet & Violet - [name]"
-        pattern1 = r"Pokémon - Trading Card Game: Scarlet & Violet - (.+)"
-        match1 = re.search(pattern1, full_name)
-        if match1:
-            extracted = match1.group(1).strip()
-            logger.debug(f"Matched pattern 1: {extracted}")
-            return extracted
-
-        # Rule 2: For "Pokémon - Trading Card Game: Scarlet & Violet\u2014[name]" (em dash)
-        pattern2 = r"Pokémon - Trading Card Game: Scarlet & Violet\u2014(.+)"
-        match2 = re.search(pattern2, full_name)
-        if match2:
-            extracted = match2.group(1).strip()
-            logger.debug(f"Matched pattern 2 (em dash): {extracted}")
-            return extracted
-
-        # Rule 3: For "Pokémon - Trading Card Game: Scarlet & Violet [name]" (space only)
-        pattern3 = r"Pokémon - Trading Card Game: Scarlet & Violet (.+)"
-        match3 = re.search(pattern3, full_name)
-        if match3:
-            extracted = match3.group(1).strip()
-            logger.debug(f"Matched pattern 3 (space): {extracted}")
-            return extracted
-
-        # Rule 4: For "Pokémon - Trading Card Game: [name]"
-        pattern4 = r"Pokémon - Trading Card Game: (.+)"
-        match4 = re.search(pattern4, full_name)
-        if match4:
-            extracted = match4.group(1).strip()
-            logger.debug(f"Matched pattern 4: {extracted}")
-            return extracted
-
-        # Rule 5: For "Pokémon - Trading Card Game - [name]"
-        pattern5 = r"Pokémon - Trading Card Game - (.+)"
-        match5 = re.search(pattern5, full_name)
-        if match5:
-            extracted = match5.group(1).strip()
-            logger.debug(f"Matched pattern 5: {extracted}")
-            return extracted
-
-        # Rule 6: If no pattern matches, return the whole thing
-        logger.debug(f"No pattern matched, using full name: {full_name}")
+        # For Target products, typically return the full name
+        # You can add specific extraction rules here if needed
+        logger.debug(f"Using full name: {full_name}")
         return full_name.strip()
 
     def scrape_product_info(self, sku: str) -> Tuple[Optional[str], Optional[str]]:
-        """Scrape product name and thumbnail URL for a given SKU with extensive logging"""
+        """Scrape product name and thumbnail URL for a given SKU from Target"""
         if not self.driver:
             logger.error("Driver not initialized")
             return None, None
 
-        url = f"https://www.bestbuy.com/site/{sku}.p"
+        # Use the correct Target URL format
+        url = f"https://www.target.com/p/-/A-{sku}"
 
         try:
-            logger.info(f"Scraping product info for SKU {sku}")
+            logger.info(f"Scraping Target product info for SKU {sku}")
 
             # Navigate to the page
             start_time = time.time()
@@ -224,29 +187,33 @@ class BestBuyScraper:
             logger.debug(f"Page title: {page_title}")
 
             # Check for error pages
-            if "error" in page_title.lower() or "not found" in page_title.lower():
+            if "error" in page_title.lower() or "not found" in page_title.lower() or "target" not in page_title.lower():
                 logger.warning(f"Error page detected for SKU {sku}: {page_title}")
                 return f"Unknown Product (SKU: {sku})", None
 
             product_name = None
             thumbnail_url = None
 
-            # Try to get product name with multiple selectors
+            # Try to get product name with Target-specific selectors
             try:
-                logger.debug("Attempting to find product title...")
+                logger.debug("Attempting to find Target product title...")
 
                 title_selectors = [
+                    # Primary Target product title selector
+                    "//h1[@id='pdp-product-title-id']",
+                    "//h1[@data-test='product-title']",
+                    # Alternative selectors
+                    "//h1[contains(@class, 'ndsHeading')]",
+                    "//h1[contains(@class, 'product-title')]",
                     "//h1",
-                    "//h1[@class='sr-only-focusable']",
-                    "//div[contains(@class, 'product-title')]//h1",
-                    "//div[contains(@class, 'pdp-product-name')]//h1",
-                    "//span[contains(@class, 'sr-only-focusable')]"
+                    # Span selector as fallback
+                    "//span[@data-test='product-title']"
                 ]
 
                 title_element = None
                 for i, selector in enumerate(title_selectors):
                     try:
-                        logger.debug(f"Trying title selector {i + 1}: {selector}")
+                        logger.debug(f"Trying Target title selector {i + 1}: {selector}")
                         title_element = self.driver.find_element(By.XPATH, selector)
                         if title_element and title_element.text.strip():
                             logger.debug(f"Found title with selector {i + 1}")
@@ -257,7 +224,7 @@ class BestBuyScraper:
 
                 if title_element:
                     full_name = title_element.text.strip()
-                    logger.info(f"Raw product title found: {full_name}")
+                    logger.info(f"Raw Target product title found: {full_name}")
 
                     extracted_name = self.extract_product_name(full_name)
                     if extracted_name is None:
@@ -275,24 +242,22 @@ class BestBuyScraper:
                 logger.error(f"Error extracting product name for SKU {sku}: {e}")
                 product_name = f"Unknown Product (SKU: {sku})"
 
-            # Try to get thumbnail URL with multiple selectors and extensive logging
+            # Try to get thumbnail URL with Target-specific selectors
             try:
-                logger.debug("Attempting to find product image...")
+                logger.debug("Attempting to find Target product image...")
 
                 img_selectors = [
-                    # Your specific selector
-                    "/html/body/div[5]/div[4]/div[1]/div[2]/div[3]/div[1]/div/div/div/div/div/div[1]/div/div/img[1]",
-                    # Alternative specific path
-                    "/html/body/div[5]/div[4]/div[1]/div[2]/div[2]/div/div[2]/div/button/img",
-                    # General selectors
-                    "//div[contains(@class, 'primary-image')]//img",
-                    "//div[contains(@class, 'carousel')]//img[1]",
+                    # Primary Target image gallery selector
+                    "//div[@id='PdpImageGallerySection']//img",
+                    # Alternative Target image selectors
+                    "//div[contains(@class, 'image-gallery')]//img",
                     "//div[contains(@class, 'product-image')]//img",
-                    "//img[contains(@alt, 'Front.')]",
-                    "//div[contains(@class, 'sr-only-focusable')]//following::img[1]",
-                    "//img[contains(@class, 'product')]",
-                    "//button//img[contains(@src, 'bbystatic')]",
-                    "//img[contains(@src, 'pisces.bbystatic.com')]"
+                    "//img[contains(@src, 'target.scene7.com')]",
+                    "//img[contains(@src, 'Target/')]",
+                    # General image selectors
+                    "//img[contains(@alt, 'of')]",
+                    "//main//img[1]",
+                    "//img[contains(@class, 'product')]"
                 ]
 
                 img_element = None
@@ -300,7 +265,7 @@ class BestBuyScraper:
 
                 for i, selector in enumerate(img_selectors):
                     try:
-                        logger.debug(f"Trying image selector {i + 1}: {selector}")
+                        logger.debug(f"Trying Target image selector {i + 1}: {selector}")
                         img_element = self.driver.find_element(By.XPATH, selector)
                         if img_element:
                             successful_selector = selector
@@ -324,14 +289,29 @@ class BestBuyScraper:
                         # Extract URLs from srcset
                         urls = re.findall(r'(https://[^\s,]+)', srcset)
                         if urls:
-                            # Take the highest quality URL (usually the last one)
-                            thumbnail_url = urls[-1]
+                            # Take a medium quality URL (not the smallest, not the largest)
+                            if len(urls) >= 3:
+                                thumbnail_url = urls[2]  # Usually 600px version
+                            else:
+                                thumbnail_url = urls[-1]  # Highest available
+
+                            # Convert WebP to PNG for better Discord compatibility
+                            if 'fmt=webp' in thumbnail_url:
+                                thumbnail_url = thumbnail_url.replace('fmt=webp', 'fmt=png')
+                            elif 'fmt=pjpeg' in thumbnail_url:
+                                thumbnail_url = thumbnail_url.replace('fmt=pjpeg', 'fmt=png')
+
                             logger.info(f"Extracted thumbnail from srcset: {thumbnail_url}")
                         else:
                             logger.warning("Srcset found but no URLs extracted")
 
                     if not thumbnail_url and src:
                         thumbnail_url = src
+                        # Convert WebP to PNG for better Discord compatibility
+                        if 'fmt=webp' in thumbnail_url:
+                            thumbnail_url = thumbnail_url.replace('fmt=webp', 'fmt=png')
+                        elif 'fmt=pjpeg' in thumbnail_url:
+                            thumbnail_url = thumbnail_url.replace('fmt=pjpeg', 'fmt=png')
                         logger.info(f"Using src as thumbnail: {thumbnail_url}")
 
                     if not thumbnail_url:
@@ -342,7 +322,8 @@ class BestBuyScraper:
             except Exception as e:
                 logger.error(f"Error extracting thumbnail for SKU {sku}: {e}")
 
-            logger.info(f"Scraping complete for SKU {sku} - Name: {product_name}, Thumbnail: {bool(thumbnail_url)}")
+            logger.info(
+                f"Target scraping complete for SKU {sku} - Name: {product_name}, Thumbnail: {bool(thumbnail_url)}")
             return product_name, thumbnail_url
 
         except TimeoutException:
@@ -437,7 +418,7 @@ class ProductInfoUpdater:
         def background_scraper():
             try:
                 self.is_scraping = True
-                logger.info("Starting background product scraping...")
+                logger.info("Starting background Target product scraping...")
 
                 # Load current products
                 products = self.discord_handler._load_products()
@@ -455,12 +436,12 @@ class ProductInfoUpdater:
                     logger.info("No SKUs need scraping")
                     return
 
-                logger.info(f"Background scraping {len(skus_to_process)} SKUs")
+                logger.info(f"Background scraping {len(skus_to_process)} Target SKUs")
 
                 # Initialize scraper
-                self.scraper = BestBuyScraper()
+                self.scraper = TargetScraper()
                 if not self.scraper.setup_driver():
-                    logger.error("Failed to setup web scraper")
+                    logger.error("Failed to setup Target web scraper")
                     return
 
                 # Process SKUs one by one
@@ -476,17 +457,17 @@ class ProductInfoUpdater:
 
                         logger.info(f"[{i + 1}/{len(skus_to_process)}] {result_message}")
 
-                        # Add delay between requests
+                        # Add delay between requests to be respectful to Target
                         time.sleep(3)
 
                     except Exception as e:
-                        logger.error(f"Error processing SKU {sku}: {e}")
+                        logger.error(f"Error processing Target SKU {sku}: {e}")
                         continue
 
-                logger.info(f"Background scraping completed. Updated {updated_count} products.")
+                logger.info(f"Background Target scraping completed. Updated {updated_count} products.")
 
             except Exception as e:
-                logger.error(f"Error in background scraping: {e}")
+                logger.error(f"Error in background Target scraping: {e}")
             finally:
                 if self.scraper:
                     self.scraper.close()
@@ -496,9 +477,9 @@ class ProductInfoUpdater:
         if not self.is_scraping:
             self.scraping_thread = threading.Thread(target=background_scraper, daemon=True)
             self.scraping_thread.start()
-            logger.info("Started background scraping thread")
+            logger.info("Started background Target scraping thread")
         else:
-            logger.warning("Scraping already in progress")
+            logger.warning("Target scraping already in progress")
 
     def update_products_from_web(self, sku_list: list = None, force_update: bool = False):
         """Update product information (non-blocking version)"""
@@ -508,7 +489,7 @@ class ProductInfoUpdater:
     def stop_scraping(self):
         """Stop background scraping"""
         if self.is_scraping:
-            logger.info("Stopping background scraping...")
+            logger.info("Stopping background Target scraping...")
             self.is_scraping = False
             if self.scraping_thread and self.scraping_thread.is_alive():
                 self.scraping_thread.join(timeout=5)

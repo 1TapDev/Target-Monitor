@@ -4,7 +4,7 @@ import time
 import logging
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
-from bestbuy_scraper import BestBuyScraper
+from target_scraper import BestBuyScraper
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class FallbackScraper:
 
     def scrape_product_info(self, sku: str) -> Tuple[Optional[str], Optional[str]]:
         """Scrape product info using requests and BeautifulSoup"""
-        url = f"https://www.bestbuy.com/site/{sku}.p"
+        url = f"https://www.target.com/site/{sku}.p"
 
         try:
             logger.info(f"Fallback scraping for SKU {sku} from {url}")

@@ -55,7 +55,7 @@ class ConfigLoader:
             "database": {
                 "host": "localhost",
                 "port": 5432,
-                "database": "bestbuy_monitor",
+                "database": "target_monitor",
                 "username": "postgres",
                 "password": "password"
             },

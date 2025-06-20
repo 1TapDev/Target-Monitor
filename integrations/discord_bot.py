@@ -15,7 +15,7 @@ import re
 logger = logging.getLogger(__name__)
 
 
-class BestBuyBot(commands.Bot):
+class TargetBot(commands.Bot):
     def __init__(self, token: str, webhook_url: str, db_manager: DatabaseManager):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -115,10 +115,10 @@ class BestBuyBot(commands.Bot):
 
 
 # Initialize bot instance
-bot: Optional[BestBuyBot] = None
+bot: Optional[TargetBot] = None
 
 
-def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager) -> BestBuyBot:
+def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager) -> TargetBot:
     """Setup and return Discord bot instance"""
     global bot
 
@@ -126,16 +126,16 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
         logger.warning("No Discord bot token provided")
         return None
 
-    bot = BestBuyBot(token, webhook_url, db_manager)
+    bot = TargetBot(token, webhook_url, db_manager)
 
     # Add slash commands
-    @bot.tree.command(name="bestbuy", description="Check Best Buy stock for SKU(s) and ZIP code")
-    async def bestbuy_slash(interaction: discord.Interaction, sku: str, zip_code: str):
-        """Slash command version of /bestbuy - supports multiple SKUs separated by commas"""
+    @bot.tree.command(name="target", description="Check Target stock for SKU(s) and ZIP code")
+    async def target_slash(interaction: discord.Interaction, sku: str, zip_code: str):
+        """Slash command version of /target - supports multiple SKUs separated by commas"""
         await interaction.response.defer(ephemeral=True)
 
         try:
-            logger.info(f"Slash command /bestbuy called by {interaction.user} with SKU: {sku}, ZIP: {zip_code}")
+            logger.info(f"Slash command /target called by {interaction.user} with SKU: {sku}, ZIP: {zip_code}")
 
             # Validate ZIP code
             if not bot.validate_zip_code(zip_code):
@@ -191,7 +191,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                         await asyncio.sleep(60)
 
                     # Run the command WITHOUT sending webhook (Discord bot handles its own response)
-                    result = bot.command_handler.bestbuy_command(single_sku, zip_code, send_webhook=False)
+                    result = bot.command_handler.target_command(single_sku, zip_code, send_webhook=False)
 
                     if result['success'] and result['stores']:
                         total_results.append({
@@ -299,7 +299,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
             for sku in current_config.skus:
                 try:
                     # Get fresh API data for this specific SKU and ZIP
-                    api_result = bot.command_handler.bestbuy_command(sku, zip_code, send_webhook=False)
+                    api_result = bot.command_handler.target_command(sku, zip_code, send_webhook=False)
 
                     if api_result['success'] and api_result['stores']:
                         # Process fresh API data
@@ -500,9 +500,9 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
             logger.error(f"Error in location-stock command: {e}")
             await interaction.followup.send("❌ An error occurred while checking location stock.", ephemeral=True)
 
-    @bot.tree.command(name="stores-near", description="Find all Best Buy stores within 100 miles of a ZIP code")
+    @bot.tree.command(name="stores-near", description="Find all Target stores within 100 miles of a ZIP code")
     async def stores_near_slash(interaction: discord.Interaction, zip_code: str):
-        """Find all Best Buy stores near a ZIP code and send via DM"""
+        """Find all Target stores near a ZIP code and send via DM"""
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -525,7 +525,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
 
             # Show processing message
             progress_msg = await interaction.followup.send(
-                f"🔄 **Finding stores near ZIP {zip_code}...**\nSearching for Best Buy locations.",
+                f"🔄 **Finding stores near ZIP {zip_code}...**\nSearching for Target locations.",
                 ephemeral=True)
 
             sample_sku = current_config.skus[0]
@@ -553,7 +553,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                         })
 
                 if not all_stores:
-                    result = bot.command_handler.bestbuy_command(sample_sku, zip_code, send_webhook=False)
+                    result = bot.command_handler.target_command(sample_sku, zip_code, send_webhook=False)
                     if result['success'] and result['stores']:
                         for store in result['stores']:
                             store_id = store.get('id')
@@ -575,7 +575,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
 
             if not all_stores:
                 await progress_msg.edit(
-                    content=f"🏪 **No Stores Found**\nNo Best Buy stores found within 100 miles of ZIP code **{zip_code}**.")
+                    content=f"🏪 **No Stores Found**\nNo Target stores found within 100 miles of ZIP code **{zip_code}**.")
                 return
 
             # Sort stores by distance
@@ -594,7 +594,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                 for chunk_num, store_chunk in enumerate(store_chunks):
                     # Create embed for this chunk
                     embed = discord.Embed(
-                        title=f"🏪 Best Buy Stores Near ZIP {zip_code}",
+                        title=f"🏪 Target Stores Near ZIP {zip_code}",
                         description=f"Found **{len(all_stores)}** stores within 100 miles" +
                                     (f" (Part {chunk_num + 1}/{len(store_chunks)})" if len(store_chunks) > 1 else ""),
                         color=0x0066cc
@@ -612,7 +612,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                             inline=True
                         )
 
-                    embed.set_footer(text=f"Best Buy Store Locator • ZIP: {zip_code}")
+                    embed.set_footer(text=f"Target Store Locator • ZIP: {zip_code}")
 
                     # Send via DM
                     await interaction.user.send(embed=embed)
@@ -622,7 +622,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                         await asyncio.sleep(1)
 
                 await progress_msg.edit(
-                    content=f"✅ **Store List Sent via DM**\nFound **{len(all_stores)}** Best Buy stores within 100 miles of ZIP **{zip_code}**.")
+                    content=f"✅ **Store List Sent via DM**\nFound **{len(all_stores)}** Target stores within 100 miles of ZIP **{zip_code}**.")
 
             except discord.Forbidden:
                 await progress_msg.edit(
@@ -794,13 +794,13 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
 
             messages_to_analyze = []
             async for message in channel.history(limit=500, after=cutoff_time):
-                if (message.author.name == "BestBuy" and message.embeds and len(message.embeds) > 0 and "Stock Alert" in
+                if (message.author.name == "Target" and message.embeds and len(message.embeds) > 0 and "Stock Alert" in
                         message.embeds[0].title):
                     messages_to_analyze.append(message)
 
             if not messages_to_analyze:
                 await interaction.followup.send(
-                    f"📊 **No Stock Alerts Found**\nNo BestBuy stock alert messages found in the last {minutes} minutes.",
+                    f"📊 **No Stock Alerts Found**\nNo Target stock alert messages found in the last {minutes} minutes.",
                     ephemeral=True)
                 return
 

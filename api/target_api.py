@@ -10,10 +10,10 @@ from api.proxy_manager import ProxyManager
 logger = logging.getLogger(__name__)
 
 
-class BestBuyAPI:
+class TargetAPI:
     def __init__(self):
         self.proxy_manager = ProxyManager("proxies.txt")
-        self.base_url = "https://api.snormax.com/stock/bestbuy"
+        self.base_url = "https://api.snormax.com/stock/target"
         self.cache_busting_enabled = True  # Enable cache busting by default
         self.last_request_time = 0
         self.min_request_interval = 0.1  # Minimum 100ms between requests
@@ -517,17 +517,17 @@ class BestBuyAPI:
             return None
 
     def extract_stores_from_response(self, response_data: Dict) -> List[Dict]:
-        """Extract store information from API response"""
+        """Extract store information from Target API response"""
         if not response_data:
             return []
 
         locations = response_data.get('locations', [])
         items = response_data.get('items', [])
 
-        if not items:
+        if not items or not locations:
             return []
 
-        # Get the first item's location data
+        # Get the first item's location availability data
         item = items[0]
         item_locations = item.get('locations', [])
 
@@ -535,14 +535,31 @@ class BestBuyAPI:
         for location in locations:
             store_id = location.get('id')
 
-            # Find matching item location data
-            item_location = None
-            for il in item_locations:
-                if il.get('locationId') == store_id:
-                    item_location = il
+            # Find matching availability data for this store
+            availability_data = None
+            for item_location in item_locations:
+                if item_location.get('locationId') == store_id:
+                    availability_data = item_location
                     break
 
-            # Create store data combining location and availability info
+            # Extract quantities - Target has both pickup and in-store quantities
+            pickup_quantity = 0
+            instore_quantity = 0
+
+            if availability_data:
+                # Get pickup quantity
+                availability = availability_data.get('availability', {})
+                pickup_quantity = availability.get('availablePickupQuantity', 0)
+
+                # Get in-store quantity
+                instore_availability = availability_data.get('inStoreAvailability', {})
+                instore_quantity = instore_availability.get('availableInStoreQuantity', 0)
+
+            # Use the higher of the two quantities as the main quantity
+            # You could also sum them or handle them separately based on your needs
+            total_quantity = max(pickup_quantity, instore_quantity)
+
+            # Create store data in the format expected by your existing code
             store_data = {
                 'id': store_id,
                 'name': location.get('name', ''),
@@ -552,8 +569,10 @@ class BestBuyAPI:
                 'zipCode': location.get('zipCode', ''),
                 'phone': location.get('phone', ''),
                 'distance': location.get('distance', 0),
-                'locationFormat': location.get('locationFormat', ''),
-                'locations': [item_location] if item_location else []
+                'quantity': total_quantity,  # Main quantity for compatibility
+                'pickup_quantity': pickup_quantity,  # Target-specific: pickup orders
+                'instore_quantity': instore_quantity,  # Target-specific: in-store shopping
+                'availability_data': availability_data  # Raw availability data for debugging
             }
 
             stores.append(store_data)
@@ -630,6 +649,6 @@ class BestBuyAPI:
         """Close the session"""
         try:
             self.session.close()
-            logger.info("BestBuyAPI session closed")
+            logger.info("TargetAPI session closed")
         except Exception as e:
-            logger.error(f"Error closing BestBuyAPI session: {e}")
+            logger.error(f"Error closing TargetAPI session: {e}")
