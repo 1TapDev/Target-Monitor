@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 
-class EnhancedBestBuyAPI:
+class EnhancedTargetAPI:
     """Enhanced Best Buy API client with rate limiting and error handling"""
 
     def __init__(self, proxy_manager=None):
-        self.base_url = "https://api.snormax.com/stock/bestbuy"
+        self.base_url = "https://api.snormax.com/stock/target"
         self.headers = {
             'authorization': 'Bearer null',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
@@ -410,7 +410,7 @@ class EnhancedBestBuyAPI:
 
 
 # Backwards compatibility wrapper
-class BestBuyAPI(EnhancedBestBuyAPI):
+class TargetAPI(EnhancedTargetAPI):
     """Backwards compatible wrapper for existing code"""
 
     def __init__(self, proxy_manager=None):

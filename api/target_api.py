@@ -76,7 +76,7 @@ class TargetAPI:
         if not proxy_dict:
             return False
 
-        test_url = f"{self.base_url}?sku=9999999&zip=00000"
+        test_url = f"{self.base_url}?sku=99999999&zip=00000"
 
         try:
             logger.debug(f"Validating proxy: {proxy_dict.get('http', 'Unknown')}")

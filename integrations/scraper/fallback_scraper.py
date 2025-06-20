@@ -4,7 +4,7 @@ import time
 import logging
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
-from target_scraper import BestBuyScraper
+from target_scraper import TargetScraper
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ class EnhancedProductInfoUpdater:
         """Setup both Selenium and fallback scrapers"""
 
         # Try Selenium first
-        self.scraper = BestBuyScraper()
+        self.scraper = TargetScraper()
         selenium_ready = self.scraper.setup_driver()
 
         if not selenium_ready:
