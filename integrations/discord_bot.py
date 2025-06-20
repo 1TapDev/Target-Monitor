@@ -251,7 +251,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                         dm_embed = discord.Embed(
                             title=product_info['name'],
                             url=product_info['url'],
-                            color=255
+                            color=0xff0000
                         )
 
                         for field in fields:
@@ -440,7 +440,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                     detail_embed = discord.Embed(
                         title=f"🏪 {store_info['store_name']}",
                         description=f"**Address:** {store_info['address']}, {store_info['city']}, {store_info['state']} {store_info['zip_code']}\n**Distance:** {store_info['distance']:.1f} miles",
-                        color=0x0066cc
+                        color=0xff000
                     )
 
                     # Add product information
@@ -599,7 +599,7 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
                         title=f"🏪 Target Stores Near ZIP {zip_code}",
                         description=f"Found **{len(all_stores)}** stores within 100 miles" +
                                     (f" (Part {chunk_num + 1}/{len(store_chunks)})" if len(store_chunks) > 1 else ""),
-                        color=0x0066cc
+                        color=0xff000
                     )
 
                     # Add fields for stores in this chunk
