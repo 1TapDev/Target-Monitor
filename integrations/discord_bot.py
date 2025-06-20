@@ -5,6 +5,7 @@ from integrations.discord_handler import DiscordHandler
 from data.database import DatabaseManager
 from utils.config import ConfigLoader
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import asyncio
 import json
@@ -30,6 +31,7 @@ class TargetBot(commands.Bot):
         self.discord_handler = DiscordHandler(webhook_url)
         self.command_handler = CommandHandler(self.discord_handler)
         self.db_manager = db_manager
+        self.executor = ThreadPoolExecutor(max_workers=4)
 
     async def on_ready(self):
         logger.info(f'Discord bot logged in as {self.user} (ID: {self.user.id})')

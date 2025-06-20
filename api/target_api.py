@@ -5,6 +5,7 @@ import time
 import random
 import base64
 import threading
+import asyncio
 from api.proxy_manager import ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -15,8 +16,8 @@ class TargetAPI:
         self.proxy_manager = ProxyManager("proxies.txt")
         self.base_url = "https://api.snormax.com/stock/target"
         self.cache_busting_enabled = True  # Enable cache busting by default
-        self.last_request_time = 0
-        self.min_request_interval = 0.1  # Minimum 100ms between requests
+        self.last_request_times = {}
+        self.min_request_interval = 3.0  # Minimum 100ms between requests
 
         # Enhanced proxy validation
         self.validated_proxies = set()  # Store validated proxy URLs
@@ -279,25 +280,27 @@ class TargetAPI:
         return random.random() < self.cache_bust_probability
 
     def _enforce_request_spacing(self, sku: str, zip_code: str):
-        """
-        Enforce spacing between requests for the same SKU-ZIP combination.
-
-        Args:
-            sku: Product SKU
-            zip_code: ZIP code
-        """
-        request_key = f"{sku}_{zip_code}"
+        """Enforce request spacing to avoid rate limiting"""
         current_time = time.time()
+        request_key = f"{sku}_{zip_code}"
 
-        last_request_time = self.request_history.get(request_key, 0)
-        time_since_last = current_time - last_request_time
+        if request_key in self.last_request_times:
+            time_since_last = current_time - self.last_request_times[request_key]
+            if time_since_last < self.min_request_interval:
+                sleep_time = self.min_request_interval - time_since_last
+                logger.debug(f"Rate limiting: sleeping {sleep_time:.2f}s for {request_key}")
 
-        if time_since_last < self.min_same_request_interval:
-            sleep_time = self.min_same_request_interval - time_since_last
-            logger.debug(f"Spacing requests for {request_key}: sleeping {sleep_time:.1f}s")
-            time.sleep(sleep_time)
+                # Check if we're in an async context
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in async context but this is a sync method
+                    # Let the thread pool handle the sleep
+                    time.sleep(sleep_time)
+                except RuntimeError:
+                    # No event loop running, safe to use blocking sleep
+                    time.sleep(sleep_time)
 
-        self.request_history[request_key] = time.time()
+        self.last_request_times[request_key] = current_time
 
     def set_cache_busting(self, enabled: bool):
         """Enable or disable cache busting"""
