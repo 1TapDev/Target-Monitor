@@ -143,26 +143,52 @@ def setup_inventory_logger():
 
 def log_inventory_change(action: str, sku: str, store_id: str, store_name: str,
                          prev_qty: int, new_qty: int, distance: float = 0,
-                         city: str = "", state: str = "", zip_code: str = ""):
+                         city: str = "", state: str = "", zip_code: str = "",
+                         retailer: str = "target"):
     """
-    Log inventory changes in condensed format for AI analysis
+    Log inventory changes to the inventory log file
 
-    Format: ACTION|SKU|STORE_ID|STORE_NAME|PREV_QTY|NEW_QTY|DISTANCE|CITY|STATE|ZIP
-    Actions: RESTOCK, OUT_OF_STOCK, INCREASE, DECREASE, NEW_STORE, INITIAL
+    Args:
+        action: Type of change (NEW_STORE, RESTOCK, OUT_OF_STOCK, INCREASE, DECREASE)
+        sku: Product SKU
+        store_id: Store identifier
+        store_name: Store name
+        prev_qty: Previous quantity
+        new_qty: New quantity
+        distance: Distance from search location
+        city: Store city
+        state: Store state
+        zip_code: Store ZIP code
+        retailer: Retailer name (target, bestbuy, etc.)
     """
+    try:
+        # Get the inventory logger (assumes setup_inventory_logger was called)
+        inventory_logger = logging.getLogger('inventory')
 
-    inventory_logger = logging.getLogger('inventory')
+        # Format the log message with retailer context
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    # Clean and truncate data for condensed format
-    store_name_clean = store_name.replace('|', '_').replace('\n', ' ')[:30]
-    city_clean = city.replace('|', '_')[:15]
-    state_clean = state.replace('|', '_')[:2]
-    zip_clean = zip_code.replace('|', '_')[:5]
+        # Enhanced log format with retailer
+        log_message = (
+            f"{timestamp} | {retailer.upper()} | {action} | "
+            f"SKU:{sku} | Store:{store_id} | {store_name} | "
+            f"{prev_qty}→{new_qty} | {city}, {state} {zip_code} | "
+            f"Distance:{distance:.1f}mi"
+        )
 
-    # Create condensed log entry
-    log_entry = f"{action}|{sku}|{store_id}|{store_name_clean}|{prev_qty}|{new_qty}|{distance:.1f}|{city_clean}|{state_clean}|{zip_clean}"
+        # Log at appropriate level based on action
+        if action in ['RESTOCK', 'NEW_STORE']:
+            inventory_logger.info(log_message)
+        elif action == 'OUT_OF_STOCK':
+            inventory_logger.warning(log_message)
+        else:
+            inventory_logger.info(log_message)
 
-    inventory_logger.info(log_entry)
+    except Exception as e:
+        # Fallback to main logger if inventory logger fails
+        main_logger = logging.getLogger(__name__)
+        main_logger.error(f"Failed to log inventory change: {e}")
+        main_logger.info(f"Inventory change: {action} - {retailer} SKU {sku} at {store_name}")
 
 
 def get_logger(name: str):

@@ -45,8 +45,8 @@ class DatabaseManager:
                         store_name VARCHAR(255),
                         address VARCHAR(500),
                         city VARCHAR(100),
-                        state VARCHAR(5),
-                        zip_code VARCHAR(10),
+                        state VARCHAR(50),
+                        zip_code VARCHAR(20),
                         distance FLOAT,
                         quantity INTEGER NOT NULL,
                         pickup_quantity INTEGER DEFAULT 0,
@@ -268,8 +268,28 @@ class DatabaseManager:
         # Database update with Target-specific fields
         try:
             with self.connection.cursor() as cursor:
+                # DEBUG: Check data lengths before insert
+                debug_data = {
+                    'retailer': retailer,
+                    'sku': sku,
+                    'store_id': store_data.get('id', ''),
+                    'store_name': store_data.get('name', ''),
+                    'address': store_data.get('address', ''),
+                    'city': store_data.get('city', ''),
+                    'state': store_data.get('state', ''),
+                    'zip_code': store_data.get('zipCode', ''),
+                    'phone': store_data.get('phone', '')
+                }
+
+                # Log field lengths for debugging
+                for field, value in debug_data.items():
+                    if value and len(str(value)) > 50:  # Log long values
+                        logger.warning(f"Long {field} value ({len(str(value))} chars): {str(value)[:100]}...")
+                    elif field in ['state', 'zip_code'] and len(str(value)) > 10:
+                        logger.warning(f"Potentially problematic {field} ({len(str(value))} chars): {value}")
+
+                # Continue with your existing insert/update logic...
                 if quantity_changed:
-                    # Insert/update with Target-specific fields
                     cursor.execute("""
                         INSERT INTO store_stock 
                         (retailer, sku, store_id, store_name, address, city, state, zip_code, 
@@ -291,14 +311,14 @@ class DatabaseManager:
                             last_updated = CURRENT_TIMESTAMP,
                             quantity_last_changed = CURRENT_TIMESTAMP
                     """, (
-                        retailer, sku, store_id, store_data.get('name', ''),
+                        retailer, sku, store_data.get('id', ''), store_data.get('name', ''),
                         store_data.get('address', ''), store_data.get('city', ''),
                         store_data.get('state', ''), store_data.get('zipCode', ''),
                         store_data.get('distance', 0), current_quantity,
                         pickup_quantity, instore_quantity, store_data.get('phone', '')
                     ))
                 else:
-                    # Update last_updated even if quantity didn't change
+                    # Handle case when quantity didn't change
                     cursor.execute("""
                         INSERT INTO store_stock 
                         (retailer, sku, store_id, store_name, address, city, state, zip_code, 
@@ -318,15 +338,16 @@ class DatabaseManager:
                             phone = EXCLUDED.phone,
                             last_updated = CURRENT_TIMESTAMP
                     """, (
-                        retailer, sku, store_id, store_data.get('name', ''),
+                        retailer, sku, store_data.get('id', ''), store_data.get('name', ''),
                         store_data.get('address', ''), store_data.get('city', ''),
                         store_data.get('state', ''), store_data.get('zipCode', ''),
                         store_data.get('distance', 0), current_quantity,
                         pickup_quantity, instore_quantity, store_data.get('phone', '')
                     ))
-
         except Exception as e:
             logger.error(f"Failed to update stock for {retailer} {sku}, {store_id}: {e}")
+            # Log the problematic data for debugging
+            logger.error(f"Problematic data: {debug_data}")
 
         return changed, previous_quantity
 
