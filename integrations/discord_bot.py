@@ -68,23 +68,10 @@ class TargetBot(commands.Bot):
 
         # Check if message is from the target checkout channel
         if message.channel.id == self.CHECKOUT_CHANNEL_ID:
-            print(f"📥 Message in checkout channel from {message.author}")
-            print(f"📝 Content preview: {message.content[:100]}...")
 
             # Check if message has embeds
             if message.embeds:
-                print(f"📎 Found {len(message.embeds)} embed(s)")
                 for i, embed in enumerate(message.embeds):
-                    print(f"📋 Embed {i + 1}:")
-                    print(f"   Title: {embed.title}")
-                    print(f"   Description: {embed.description[:200] if embed.description else 'None'}...")
-                    print(f"   Author: {embed.author.name if embed.author else 'None'}")
-                    print(f"   Fields: {len(embed.fields) if embed.fields else 0}")
-
-                    # Print field details for debugging
-                    if embed.fields:
-                        for j, field in enumerate(embed.fields):
-                            print(f"     Field {j + 1}: {field.name} = {field.value[:50]}...")
 
                     # Process checkout embed
                     try:
@@ -112,8 +99,6 @@ class TargetBot(commands.Bot):
         is_target_checkout = "Target" in author_name
 
         if any(checkout_indicators) and is_target_checkout:
-            print(f"✅ Found Target checkout embed! Author: {author_name}")
-            print(f"   Title: {title}, Description: {description[:100]}...")
 
             # Run in thread pool to avoid blocking
             await asyncio.get_event_loop().run_in_executor(
@@ -121,8 +106,6 @@ class TargetBot(commands.Bot):
                 self.checkout_monitor.process_checkout_embed,
                 embed.to_dict()
             )
-        else:
-            print(f"⏭️ Not a Target checkout embed. Author: {author_name}")
 
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):

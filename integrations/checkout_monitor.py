@@ -3,19 +3,32 @@
 import discord
 import re
 import logging
+import json
+import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 class CheckoutMonitor:
     def __init__(self, db_manager, discord_handler):
         self.db_manager = db_manager
         self.discord_handler = discord_handler
-        self.target_channel_id = 1367201642528772116  # Channel to monitor
-        logger.info("Checkout monitor initialized successfully")
+        self.target_channel_id = 1367201642528772116
+        self.checkout_webhook_url = self._load_checkout_webhook_url()
+
+    def _load_checkout_webhook_url(self):
+        """Load checkout webhook URL from config.json"""
+        try:
+            if os.path.exists('config.json'):
+                with open('config.json', 'r') as f:
+                    config = json.load(f)
+                    return config.get('checkout_webhook_url', '')
+            return ''
+        except Exception as e:
+            logger.error(f"Error loading checkout webhook URL: {e}")
+            return ''
 
     def is_valid_product_name(self, product_name: str) -> bool:
         """Check if product name is valid (not a hash/encoded string)"""
@@ -61,31 +74,21 @@ class CheckoutMonitor:
             fields = embed_dict.get('fields', [])
             description = embed_dict.get('description', '') or ''
 
-            logger.info(f"Embed has {len(fields)} fields")
-            logger.info(f"Description length: {len(description)}")
-
             # Look through fields for Product field
             for field in fields:
                 field_name = field.get('name', '').lower()
                 field_value = field.get('value', '')
-
-                logger.info(f"Field: '{field_name}' = '{field_value[:100]}...'")
 
                 if 'product' in field_name:
                     # Clean and validate the product name
                     product_name = self.clean_product_name(field_value)
 
                     if not product_name:
-                        logger.info(f"Product name is empty after cleaning: '{field_value}'")
                         continue
-
-                    logger.info(f"Cleaned product name: '{product_name}'")
 
                     if self.is_encoded_product_name(product_name):
-                        logger.info(f"Skipping encoded/hash product name: {product_name}")
                         continue
                     else:
-                        logger.info(f"✅ Found valid product name: {product_name}")
                         return product_name
 
             # If no fields, try extracting from description
@@ -138,40 +141,23 @@ class CheckoutMonitor:
 
         name = name.strip()
 
-        logger.info(f"Checking if '{name}' is encoded/hash...")
-
         # Check for hash-like patterns
-        if re.match(r'^[a-f0-9]{32}$', name.lower()):  # 32-char hex (MD5)
-            logger.info(f"Detected MD5 hash: {name}")
+        if re.match(r'^[a-f0-9]{32}$', name.lower()):
             return True
-
-        if re.match(r'^[a-f0-9]{40}$', name.lower()):  # 40-char hex (SHA1)
-            logger.info(f"Detected SHA1 hash: {name}")
+        if re.match(r'^[a-f0-9]{40}$', name.lower()):
             return True
-
-        # Check for long hex strings (like the one in your screenshot)
-        if re.match(r'^[a-f0-9]{20,}$', name.lower()):  # 20+ char hex
-            logger.info(f"Detected long hex hash: {name}")
+        if re.match(r'^[a-f0-9]{20,}$', name.lower()):
             return True
-
-        # Check for patterns like "9ed47857dd84f74dc4d549817c511eed"
         if len(name) >= 20 and all(c.lower() in 'abcdef0123456789' for c in name):
-            logger.info(f"Detected hex-only string: {name}")
             return True
-
-        # Too short or just numbers
         if len(name) < 5 or name.isdigit():
-            logger.info(f"Product name too short or numeric: {name}")
             return True
 
-        logger.info(f"Product name appears valid: {name}")
         return False
 
     def process_checkout_embed(self, embed_dict):
         """Process a checkout embed (thread-safe version)"""
         try:
-            logger.info("Processing checkout embed...")
-
             # Extract embed data
             title = embed_dict.get('title', '') or ''
             description = embed_dict.get('description', '') or ''
@@ -180,13 +166,8 @@ class CheckoutMonitor:
             author = embed_dict.get('author', {})
             author_name = author.get('name', '') if author else ''
 
-            logger.info(f"Embed author: {author_name}")
-            logger.info(f"Embed title: {title}")
-            logger.info(f"Embed description: {description[:200]}...")
-
             # Check if this is a Target checkout
             if not ("Successful Checkout" in author_name and "Target" in author_name):
-                logger.info("Not a Target checkout embed, skipping")
                 return
 
             # Extract product name from embed
@@ -209,30 +190,31 @@ class CheckoutMonitor:
     def store_checkout_product(self, product_name):
         """Store checkout product in database"""
         try:
-            logger.info(f"Storing checkout for product: {product_name}")
 
             # Add or update product in database
             result = self.db_manager.add_or_update_checkout_product(product_name)
 
             if result:
-                logger.info(f"✅ Successfully stored checkout for: {product_name}")
 
                 # Send webhook if new product and webhook not sent
                 if result.get('is_new') and not result.get('webhook_sent'):
-                    self.send_new_product_webhook_sync(product_name, result.get('checkout_count', 1))
+                    self.send_new_product_webhook_sync(product_name)
             else:
                 logger.error(f"Failed to store checkout for: {product_name}")
 
         except Exception as e:
             logger.error(f"Error storing checkout product {product_name}: {e}")
 
-    def send_new_product_webhook_sync(self, product_name: str, checkout_count: int = 1):
-        """Send webhook notification for new checkout product (synchronous version)"""
+    def send_new_product_webhook_sync(self, product_name: str):
+        """Send checkout webhook notification"""
         try:
-            # Create embed for webhook
+            if not self.checkout_webhook_url:
+                return False
+
+            # Create embed for checkout webhook
             embed_data = {
                 "title": "🛒 New Target Checkout Product Detected",
-                "color": 0xff0000,  # Target red
+                "color": 0xff0000,
                 "fields": [
                     {
                         "name": "**Product**",
@@ -243,11 +225,6 @@ class CheckoutMonitor:
                         "name": "**Status**",
                         "value": "New product being checked out",
                         "inline": True
-                    },
-                    {
-                        "name": "**Checkout Count**",
-                        "value": str(checkout_count),
-                        "inline": True
                     }
                 ],
                 "footer": {
@@ -256,24 +233,106 @@ class CheckoutMonitor:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
-            # Send webhook
-            success = self.discord_handler.send_webhook_embed(embed_data)
+            # Send to checkout webhook
+            success = self._send_checkout_webhook(embed_data)
 
             if success:
-                self.db_manager.mark_checkout_webhook_sent(product_name)
-                logger.info(f"Sent webhook for new checkout product: {product_name}")
-            else:
-                logger.error(f"Failed to send webhook for: {product_name}")
+                logger.info(f"Sent checkout webhook for: {product_name}")
 
             return success
 
         except Exception as e:
-            logger.error(f"Error sending webhook for product {product_name}: {e}")
+            logger.error(f"Error sending checkout webhook for {product_name}: {e}")
+            return False
+
+    def _send_checkout_webhook(self, embed_data):
+        """Send webhook to checkout-specific URL"""
+        try:
+            import requests
+
+            payload = {
+                "embeds": [embed_data],
+                "username": "🎯 Target Checkout Monitor",
+                "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+            }
+
+            response = requests.post(
+                self.checkout_webhook_url,
+                json=payload,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            return response.status_code in [200, 204]
+
+        except Exception as e:
+            logger.error(f"Error sending checkout webhook: {e}")
+            return False
+
+    def _get_or_scrape_product_info(self, product_name):
+        """Get product info and scrape image if needed"""
+        try:
+            # Try to extract SKU from product name or URL
+            sku = self._extract_sku_from_product(product_name)
+
+            if sku:
+                # Use existing discord_handler method to get/scrape product info
+                product_info = self.discord_handler._get_product_info(sku)
+
+                # If no thumbnail, trigger scraping
+                if not product_info.get('thumbnail_url'):
+                    # This should trigger your existing product scraping logic
+                    self.discord_handler.update_product_info(sku, product_name, "", True)
+                    product_info = self.discord_handler._get_product_info(sku)
+
+                return product_info
+            else:
+                # Fallback if no SKU found
+                return {
+                    'name': product_name,
+                    'url': f'https://www.target.com/s?searchTerm={product_name.replace(" ", "+")}',
+                    'thumbnail_url': ''
+                }
+
+        except Exception as e:
+            logger.error(f"Error getting product info for {product_name}: {e}")
+            return {
+                'name': product_name,
+                'url': '',
+                'thumbnail_url': ''
+            }
+
+    def _extract_sku_from_product(self, product_name):
+        """Try to extract SKU from product name or use scraping"""
+        # This would need to be implemented based on your existing SKU extraction logic
+        # For now, return None and rely on search
+        return None
+
+    def _send_checkout_webhook(self, embed_data):
+        """Send webhook to checkout-specific URL"""
+        try:
+            import requests
+
+            payload = {
+                "embeds": [embed_data],
+                "username": "🎯 Target Checkout Monitor",
+                "avatar_url": "https://logos-world.net/wp-content/uploads/2020/04/Target-Logo.png"
+            }
+
+            response = requests.post(
+                self.checkout_webhook_url,
+                json=payload,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            return response.status_code in [200, 204]
+
+        except Exception as e:
+            logger.error(f"Error sending checkout webhook: {e}")
             return False
 
     async def send_new_product_webhook(self, product_name: str, checkout_count: int = 1):
         """Send webhook notification for new checkout product"""
-        return self.send_new_product_webhook_sync(product_name, checkout_count)
+        return self.send_new_product_webhook_sync(product_name)
 
     async def process_checkout_message(self, message: discord.Message):
         """Process a message from the checkout channel"""
@@ -305,8 +364,7 @@ class CheckoutMonitor:
                             result['checkout_count']
                         )
                     elif result and not result['is_new']:
-                        logger.info(
-                            f"Known product checked out again: {product_name} (Total: {result['checkout_count']})")
+                        logger.info(f"Known product checked out again: {product_name} (Total: {result['checkout_count']})")
 
         except Exception as e:
             logger.error(f"Error processing checkout message: {e}")
