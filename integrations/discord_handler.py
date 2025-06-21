@@ -207,6 +207,38 @@ class DiscordHandler:
             logger.error(f"Error checking send_initial flag for SKU {sku}: {e}")
             return True  # Default to True if error
 
+    def send_webhook_embed(self, embed_data):
+        """Send a webhook with embed data"""
+        try:
+            import requests
+
+            if not self.webhook_url:
+                logger.warning("No webhook URL configured")
+                return False
+
+            # Create the webhook payload
+            payload = {
+                "embeds": [embed_data]
+            }
+
+            # Send the webhook
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            if response.status_code in [200, 204]:
+                logger.info("Webhook sent successfully")
+                return True
+            else:
+                logger.error(f"Webhook failed with status {response.status_code}: {response.text}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error sending webhook: {e}")
+            return False
+
     def send_stock_alert(self, sku: str, store_data: Dict, previous_qty: Optional[int], current_qty: int):
         """Send a Target stock change alert with red theme and location tagging"""
 
@@ -218,7 +250,11 @@ class DiscordHandler:
 
         # Skip if no actual change
         if current_qty == prev_qty:
+            logger.debug(f"Skipping alert - no quantity change for SKU {sku}")
             return
+
+        # Log the alert we're about to send
+        logger.info(f"Preparing {status} alert for SKU {sku}: {prev_qty} -> {current_qty}")
 
         # Get product info (this will now check for file changes)
         product_info = self._get_product_info(sku)

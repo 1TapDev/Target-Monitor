@@ -258,7 +258,7 @@ class TargetAPI:
                 if self.is_proxy_valid_for_snormax(proxy_dict):
                     self.validated_proxies.add(proxy_url)
                     self.last_validation_check[proxy_url] = current_time
-                    logger.info(f"Validated new proxy for Snormax: {proxy['ip']}:{proxy['port']}")
+                    logger.debug(f"Validated new proxy for Snormax: {proxy['ip']}:{proxy['port']}")
                     return proxy_dict
                 else:
                     # Mark proxy as failed and remove from validated set

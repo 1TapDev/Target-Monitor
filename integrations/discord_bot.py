@@ -4,7 +4,7 @@ from commands.command_handler import CommandHandler
 from integrations.discord_handler import DiscordHandler
 from data.database import DatabaseManager
 from utils.config import ConfigLoader
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from integrations.checkout_monitor import CheckoutMonitor
 import logging
@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 class TargetBot(commands.Bot):
     def __init__(self, token: str, webhook_url: str, db_manager: DatabaseManager):
         intents = discord.Intents.default()
-        intents.message_content = True
+        intents.message_content = True  # CRITICAL: Enable message content intent
+        intents.guilds = True
+        intents.guild_messages = True
 
         super().__init__(
             command_prefix='!',
@@ -33,22 +35,23 @@ class TargetBot(commands.Bot):
         self.command_handler = CommandHandler(self.discord_handler)
         self.db_manager = db_manager
         self.executor = ThreadPoolExecutor(max_workers=4)
+
+        # Initialize checkout monitor
         self.checkout_monitor = CheckoutMonitor(db_manager, self.discord_handler)
 
-    async def on_message(self, message):
-        """Handle new messages - monitor for checkout embeds"""
-        # Ignore messages from the bot itself
-        if message.author == self.user:
-            return
-
-        # Process checkout messages
-        await self.checkout_monitor.process_checkout_message(message)
-
-        # Process commands (if any regular commands exist)
-        await self.process_commands(message)
+        # Target checkout channel ID
+        self.CHECKOUT_CHANNEL_ID = 1367201642528772116
 
     async def on_ready(self):
-        logger.info(f'Discord bot logged in as {self.user} (ID: {self.user.id})')
+        logger.info(f'🤖 Discord bot connected as {self.user} (ID: {self.user.id})')
+        logger.info(f'📺 Monitoring checkout channel: {self.CHECKOUT_CHANNEL_ID}')
+
+        # Test channel access
+        channel = self.get_channel(self.CHECKOUT_CHANNEL_ID)
+        if channel:
+            logger.info(f'✅ Successfully found checkout channel: {channel.name}')
+        else:
+            logger.error(f'❌ Cannot access checkout channel {self.CHECKOUT_CHANNEL_ID}')
 
         # Sync slash commands
         try:
@@ -56,6 +59,70 @@ class TargetBot(commands.Bot):
             logger.info(f'Synced {len(synced)} slash commands')
         except Exception as e:
             logger.error(f'Failed to sync slash commands: {e}')
+
+    async def on_message(self, message):
+        """Handle new messages - monitor for checkout embeds"""
+        # Ignore messages from the bot itself
+        if message.author == self.user:
+            return
+
+        # Check if message is from the target checkout channel
+        if message.channel.id == self.CHECKOUT_CHANNEL_ID:
+            print(f"📥 Message in checkout channel from {message.author}")
+            print(f"📝 Content preview: {message.content[:100]}...")
+
+            # Check if message has embeds
+            if message.embeds:
+                print(f"📎 Found {len(message.embeds)} embed(s)")
+                for i, embed in enumerate(message.embeds):
+                    print(f"📋 Embed {i + 1}:")
+                    print(f"   Title: {embed.title}")
+                    print(f"   Description: {embed.description[:200] if embed.description else 'None'}...")
+                    print(f"   Author: {embed.author.name if embed.author else 'None'}")
+                    print(f"   Fields: {len(embed.fields) if embed.fields else 0}")
+
+                    # Print field details for debugging
+                    if embed.fields:
+                        for j, field in enumerate(embed.fields):
+                            print(f"     Field {j + 1}: {field.name} = {field.value[:50]}...")
+
+                    # Process checkout embed
+                    try:
+                        await self.process_checkout_embed(embed)
+                    except Exception as e:
+                        print(f"❌ Error processing embed: {e}")
+
+        # Process commands (if any regular commands exist)
+        await self.process_commands(message)
+
+    async def process_checkout_embed(self, embed):
+        """Process a checkout embed"""
+        title = embed.title or ""
+        description = embed.description or ""
+        author_name = embed.author.name if embed.author else ""
+
+        # Check title, description, AND author for checkout patterns
+        checkout_indicators = [
+            "Successful Checkout" in title,
+            "Successful Checkout" in description,
+            "Successful Checkout" in author_name,  # THIS IS THE KEY LINE
+        ]
+
+        # Check specifically for Target checkouts
+        is_target_checkout = "Target" in author_name
+
+        if any(checkout_indicators) and is_target_checkout:
+            print(f"✅ Found Target checkout embed! Author: {author_name}")
+            print(f"   Title: {title}, Description: {description[:100]}...")
+
+            # Run in thread pool to avoid blocking
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                self.checkout_monitor.process_checkout_embed,
+                embed.to_dict()
+            )
+        else:
+            print(f"⏭️ Not a Target checkout embed. Author: {author_name}")
 
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):

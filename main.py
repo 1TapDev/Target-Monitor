@@ -5,12 +5,15 @@ import signal
 import sys
 import asyncio
 import os
+import argparse
 from typing import Dict, List
 import threading
 from datetime import datetime, timedelta
 import logging
 from logging.handlers import RotatingFileHandler
 import warnings
+from urllib3.exceptions import InsecureRequestWarning
+warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 import concurrent.futures
 from threading import Lock
 
@@ -44,6 +47,13 @@ try:
 except ImportError:
     USE_ENHANCED_SCRAPER = False
 
+class ConnectionWarningFilter(logging.Filter):
+    def filter(self, record):
+        if record.name == 'urllib3.connectionpool' and 'Retrying' in record.getMessage():
+            record.msg = f"Connection retry: {record.getMessage().split('): ')[1]}"
+        return True
+
+logging.getLogger('urllib3.connectionpool').addFilter(ConnectionWarningFilter())
 
 class EnhancedTargetMonitor:
     """Enhanced Target monitor with intelligent rate limiting and error handling"""
@@ -400,10 +410,12 @@ class EnhancedTargetMonitor:
                         # Send stock alert (only if not in test mode or timeout)
                         if not self.shutdown_requested and not self.test_mode and not is_new_product_timeout:
                             try:
+                                # Log what we're about to send
+                                logger.info(f"Sending stock alert for SKU {sku}: {previous_qty} -> {current_qty}")
                                 self.discord_handler.send_stock_alert(sku, store, previous_qty, current_qty)
                                 self.stats['alerts_sent'] += 1
                             except Exception as e:
-                                self.logger.error(f"Failed to send Discord alert: {e}")
+                                logger.error(f"Failed to send Discord alert: {e}")
                         elif self.test_mode:
                             self.logger.info(
                                 f"TEST MODE: Would send alert for {store.get('name')} - {previous_qty} -> {current_qty}")
@@ -629,15 +641,15 @@ class EnhancedTargetMonitor:
                                    max(1, self.stats['successful_requests'] + self.stats['failed_requests'])
                            ) * 100
 
-            self.logger.info(f"Enhanced Cycle {self.cycle_count} Summary:")
-            self.logger.info(f"  - Uptime: {uptime}")
-            self.logger.info(f"  - Success rate: {success_rate:.1f}%")
-            self.logger.info(f"  - Stock changes: {self.stats['stock_changes_detected']}")
-            self.logger.info(f"  - Alerts sent: {self.stats['alerts_sent']}")
-            self.logger.info(f"  - Requests processed: {queue_stats['total_processed']}")
-            self.logger.info(
+            self.logger.debug(f"Enhanced Cycle {self.cycle_count} Summary:")
+            self.logger.debug(f"  - Uptime: {uptime}")
+            self.logger.debug(f"  - Success rate: {success_rate:.1f}%")
+            self.logger.debug(f"  - Stock changes: {self.stats['stock_changes_detected']}")
+            self.logger.debug(f"  - Alerts sent: {self.stats['alerts_sent']}")
+            self.logger.debug(f"  - Requests processed: {queue_stats['total_processed']}")
+            self.logger.debug(
                 f"  - Queue stats: {queue_stats['queue_size']} pending, {queue_stats['active_requests']} active")
-            self.logger.info(
+            self.logger.debug(
                 f"  - Rate limit - Today: {rate_stats['requests_today']}, Last minute: {rate_stats['requests_last_minute']}")
 
         except Exception as e:
@@ -876,9 +888,7 @@ class EnhancedTargetMonitor:
 
 def main():
     """Enhanced main entry point"""
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Enhanced Target Stock Monitor')
+    parser = argparse.ArgumentParser(description='Target Stock Monitor')
     parser.add_argument('--command', action='store_true', help='Run in command mode')
     parser.add_argument('--sku', type=str, help='SKU to check (command mode only)')
     parser.add_argument('--zip', type=str, help='ZIP code to check (command mode only)')
