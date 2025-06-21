@@ -31,6 +31,50 @@ class DatabaseManager:
             logger.error(f"Failed to connect to database: {e}")
             raise
 
+    def setup_checkout_tables(self):
+        """Setup checkout monitoring tables"""
+        try:
+            with self.connection.cursor() as cursor:
+                # Create checkout_products table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS checkout_products (
+                        id SERIAL PRIMARY KEY,
+                        product_name TEXT NOT NULL UNIQUE,
+                        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        checkout_count INTEGER DEFAULT 1,
+                        last_checkout TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        webhook_sent BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+
+                # Create indexes for better performance
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_checkout_product_name 
+                    ON checkout_products(product_name)
+                ''')
+
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_checkout_first_seen 
+                    ON checkout_products(first_seen)
+                ''')
+
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_checkout_webhook_sent 
+                    ON checkout_products(webhook_sent)
+                ''')
+
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_checkout_last_checkout 
+                    ON checkout_products(last_checkout)
+                ''')
+
+                logger.info("Checkout products tables and indexes created/verified successfully")
+
+        except Exception as e:
+            logger.error(f"Error setting up checkout tables: {e}")
+            raise
+
     def create_tables(self):
         """Create necessary tables if they don't exist"""
         try:
@@ -114,10 +158,154 @@ class DatabaseManager:
 
                 logger.info("Target database tables and indexes created/verified successfully")
 
+            # Setup checkout monitoring tables
+            self.setup_checkout_tables()
+
         except Exception as e:
             logger.error(f"Failed to create tables: {e}")
             raise
 
+    # Checkout-related methods
+    def is_new_checkout_product(self, product_name: str) -> bool:
+        """Check if this is a new checkout product we haven't seen before"""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM checkout_products WHERE product_name = %s",
+                    (product_name,)
+                )
+                result = cursor.fetchone()
+                return result is None
+
+        except Exception as e:
+            logger.error(f"Error checking if checkout product is new: {e}")
+            return False
+
+    def add_or_update_checkout_product(self, product_name: str) -> Dict[str, any]:
+        """Add new checkout product or update existing product checkout count"""
+        try:
+            with self.connection.cursor() as cursor:
+                current_time = datetime.now()
+
+                # Check if product exists
+                cursor.execute(
+                    "SELECT id, checkout_count, webhook_sent FROM checkout_products WHERE product_name = %s",
+                    (product_name,)
+                )
+
+                result = cursor.fetchone()
+
+                if result:
+                    # Update existing product
+                    product_id, checkout_count, webhook_sent = result
+                    new_count = checkout_count + 1
+
+                    cursor.execute('''
+                        UPDATE checkout_products 
+                        SET checkout_count = %s, last_checkout = %s
+                        WHERE id = %s
+                    ''', (new_count, current_time, product_id))
+
+                    logger.info(f"Updated checkout product count: {product_name} (Count: {new_count})")
+
+                    return {
+                        'is_new': False,
+                        'product_name': product_name,
+                        'checkout_count': new_count,
+                        'webhook_sent': bool(webhook_sent)
+                    }
+                else:
+                    # Add new product
+                    cursor.execute('''
+                        INSERT INTO checkout_products 
+                        (product_name, first_seen, checkout_count, last_checkout, webhook_sent)
+                        VALUES (%s, %s, 1, %s, FALSE)
+                    ''', (product_name, current_time, current_time))
+
+                    logger.info(f"Added new checkout product: {product_name}")
+
+                    return {
+                        'is_new': True,
+                        'product_name': product_name,
+                        'checkout_count': 1,
+                        'webhook_sent': False
+                    }
+
+        except Exception as e:
+            logger.error(f"Error adding/updating checkout product: {e}")
+            return None
+
+    def mark_checkout_webhook_sent(self, product_name: str):
+        """Mark that webhook has been sent for this checkout product"""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE checkout_products SET webhook_sent = TRUE WHERE product_name = %s",
+                    (product_name,)
+                )
+                logger.debug(f"Marked checkout webhook as sent for: {product_name}")
+
+        except Exception as e:
+            logger.error(f"Error marking checkout webhook as sent: {e}")
+
+    def get_checkout_stats(self) -> Dict[str, any]:
+        """Get statistics about checkout products"""
+        try:
+            with self.connection.cursor() as cursor:
+                # Total products
+                cursor.execute("SELECT COUNT(*) FROM checkout_products")
+                total_products = cursor.fetchone()[0]
+
+                # Total checkouts
+                cursor.execute("SELECT SUM(checkout_count) FROM checkout_products")
+                total_checkouts = cursor.fetchone()[0] or 0
+
+                # Top products
+                cursor.execute('''
+                    SELECT product_name, checkout_count 
+                    FROM checkout_products 
+                    ORDER BY checkout_count DESC 
+                    LIMIT 10
+                ''')
+                top_products = cursor.fetchall()
+
+                # Recent products (last 24 hours)
+                cursor.execute('''
+                    SELECT COUNT(*) FROM checkout_products 
+                    WHERE first_seen > NOW() - INTERVAL '1 day'
+                ''')
+                recent_products = cursor.fetchone()[0]
+
+                return {
+                    'total_products': total_products,
+                    'total_checkouts': total_checkouts,
+                    'recent_products': recent_products,
+                    'top_products': top_products
+                }
+
+        except Exception as e:
+            logger.error(f"Error getting checkout stats: {e}")
+            return None
+
+    def get_recent_checkout_products(self, hours: int = 24) -> List[Tuple]:
+        """Get recent checkout products within specified hours"""
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute('''
+                    SELECT product_name, checkout_count, first_seen, last_checkout
+                    FROM checkout_products 
+                    WHERE first_seen > NOW() - INTERVAL '%s hours'
+                    ORDER BY first_seen DESC
+                    LIMIT 20
+                ''', (hours,))
+
+                return cursor.fetchall()
+
+        except Exception as e:
+            logger.error(f"Error getting recent checkout products: {e}")
+            return []
+
+    # Existing methods below (unchanged)
     def has_initial_report_been_sent(self, sku: str, zip_code: str, retailer: str = 'target') -> bool:
         """Check if an initial stock report has been sent for this retailer-SKU-ZIP combination"""
         try:
@@ -552,7 +740,7 @@ class DatabaseManager:
             return []
 
     def get_stores_with_stock_near_zip(self, zip_code: str, monitored_skus: List[str], retailer: str = 'target') -> \
-    List[Dict]:
+            List[Dict]:
         """Get all Target stores with stock > 0 near a ZIP code for monitored SKUs"""
         try:
             if not monitored_skus:

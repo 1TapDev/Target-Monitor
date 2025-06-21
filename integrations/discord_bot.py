@@ -6,6 +6,7 @@ from data.database import DatabaseManager
 from utils.config import ConfigLoader
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from integrations.checkout_monitor import CheckoutMonitor
 import logging
 import asyncio
 import json
@@ -32,6 +33,19 @@ class TargetBot(commands.Bot):
         self.command_handler = CommandHandler(self.discord_handler)
         self.db_manager = db_manager
         self.executor = ThreadPoolExecutor(max_workers=4)
+        self.checkout_monitor = CheckoutMonitor(db_manager, self.discord_handler)
+
+    async def on_message(self, message):
+        """Handle new messages - monitor for checkout embeds"""
+        # Ignore messages from the bot itself
+        if message.author == self.user:
+            return
+
+        # Process checkout messages
+        await self.checkout_monitor.process_checkout_message(message)
+
+        # Process commands (if any regular commands exist)
+        await self.process_commands(message)
 
     async def on_ready(self):
         logger.info(f'Discord bot logged in as {self.user} (ID: {self.user.id})')
@@ -130,7 +144,153 @@ def setup_discord_bot(token: str, webhook_url: str, db_manager: DatabaseManager)
 
     bot = TargetBot(token, webhook_url, db_manager)
 
-    # Add slash commands
+    @bot.tree.command(name="checkout-stats", description="Show checkout monitoring statistics")
+    async def checkout_stats_slash(interaction: discord.Interaction):
+        """Show checkout monitoring statistics"""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            logger.info(f"Slash command /checkout-stats called by {interaction.user}")
+
+            # Get stats from checkout monitor
+            stats = bot.checkout_monitor.get_checkout_stats()
+
+            if not stats:
+                await interaction.followup.send(
+                    "❌ **Error**\nFailed to retrieve checkout statistics.",
+                    ephemeral=True
+                )
+                return
+
+            # Create stats embed
+            embed = discord.Embed(
+                title="🛒 Target Checkout Statistics",
+                color=0xff0000,
+                description="Statistics from checkout monitoring"
+            )
+
+            # Add main stats
+            embed.add_field(
+                name="📊 **Overview**",
+                value=f"**Total Products:** {stats['total_products']}\n**Total Checkouts:** {stats['total_checkouts']}\n**New Products (24h):** {stats['recent_products']}",
+                inline=False
+            )
+
+            # Add top products
+            if stats['top_products']:
+                top_list = []
+                for i, (product_name, count) in enumerate(stats['top_products'][:5], 1):
+                    # Truncate long product names
+                    display_name = product_name[:50] + "..." if len(product_name) > 50 else product_name
+                    top_list.append(f"{i}. {display_name} ({count}x)")
+
+                embed.add_field(
+                    name="🏆 **Top Products**",
+                    value="\n".join(top_list) if top_list else "No data",
+                    inline=False
+                )
+
+            embed.set_footer(
+                text=f"Monitoring Channel: {bot.checkout_monitor.target_channel_id}"
+            )
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in checkout-stats command: {e}")
+            await interaction.followup.send(
+                "❌ An error occurred while retrieving checkout statistics.",
+                ephemeral=True
+            )
+
+    @bot.tree.command(name="recent-checkouts", description="Show recent checkout products")
+    async def recent_checkouts_slash(interaction: discord.Interaction, hours: int = 24):
+        """Show recent checkout products"""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            logger.info(f"Slash command /recent-checkouts called by {interaction.user} with hours: {hours}")
+
+            if hours < 1 or hours > 168:  # Max 1 week
+                await interaction.followup.send(
+                    "❌ **Invalid Time Range**\nPlease specify between 1 and 168 hours (1 week).",
+                    ephemeral=True
+                )
+                return
+
+            # Get recent products from database
+            cursor = bot.db_manager.connection.cursor()
+            cursor.execute('''
+                SELECT product_name, checkout_count, first_seen, last_checkout
+                FROM checkout_products 
+                WHERE first_seen > datetime('now', '-{} hours')
+                ORDER BY first_seen DESC
+                LIMIT 20
+            '''.format(hours))
+
+            recent_products = cursor.fetchall()
+
+            if not recent_products:
+                await interaction.followup.send(
+                    f"📦 **No Recent Checkouts**\nNo new products checked out in the last {hours} hours.",
+                    ephemeral=True
+                )
+                return
+
+            # Create embed
+            embed = discord.Embed(
+                title=f"🕒 Recent Checkouts ({hours}h)",
+                color=0xff0000,
+                description=f"Found {len(recent_products)} products in the last {hours} hours"
+            )
+
+            # Add products (split into multiple fields if needed)
+            product_list = []
+            for product_name, checkout_count, first_seen, last_checkout in recent_products:
+                # Truncate long names
+                display_name = product_name[:60] + "..." if len(product_name) > 60 else product_name
+
+                # Parse timestamp
+                try:
+                    first_seen_dt = datetime.fromisoformat(first_seen.replace('Z', '+00:00'))
+                    time_ago = datetime.now(timezone.utc) - first_seen_dt
+
+                    if time_ago.days > 0:
+                        time_str = f"{time_ago.days}d ago"
+                    elif time_ago.seconds > 3600:
+                        hours_ago = time_ago.seconds // 3600
+                        time_str = f"{hours_ago}h ago"
+                    else:
+                        minutes_ago = time_ago.seconds // 60
+                        time_str = f"{minutes_ago}m ago"
+                except:
+                    time_str = "Unknown"
+
+                product_list.append(f"• {display_name}\n  Checkouts: {checkout_count} | {time_str}")
+
+            # Split into chunks to avoid embed limits
+            chunk_size = 10
+            for i in range(0, len(product_list), chunk_size):
+                chunk = product_list[i:i + chunk_size]
+                field_name = f"**Products {i + 1}-{min(i + chunk_size, len(product_list))}**" if len(
+                    product_list) > chunk_size else "**Products**"
+                embed.add_field(
+                    name=field_name,
+                    value="\n".join(chunk),
+                    inline=False
+                )
+
+            embed.set_footer(text=f"Checkout Monitor • Showing last {hours} hours")
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error in recent-checkouts command: {e}")
+            await interaction.followup.send(
+                "❌ An error occurred while retrieving recent checkouts.",
+                ephemeral=True
+            )
+
     @bot.tree.command(name="target", description="Check Target stock for SKU(s) and ZIP code")
     async def target_slash(interaction: discord.Interaction, sku: str, zip_code: str):
         """Slash command version of /target - supports multiple SKUs separated by commas"""
